@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
-import httpx
+from mistralai import File, Mistral
 
 from app.core.config import Settings, get_settings
 
@@ -10,11 +11,9 @@ logger = logging.getLogger("mediscribe.transcription")
 
 _settings = get_settings()
 
-MISTRAL_TRANSCRIBE_URL = "https://api.mistral.ai/v1/audio/transcriptions"
-
 
 async def transcribe_audio(file_bytes: bytes, filename: str, settings: Settings | None = None) -> dict:
-    """Transcribe audio with Mistral ASR including speaker diarization.
+    """Transcribe audio with Mistral Voxtral ASR including speaker diarization.
 
     If no API key is configured, returns a demo transcript so the pipeline can be
     exercised end-to-end without external credentials.
@@ -24,37 +23,33 @@ async def transcribe_audio(file_bytes: bytes, filename: str, settings: Settings 
         logger.warning("No MISTRAL_API_KEY configured — using demo transcript")
         return _demo_transcript()
 
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            files = {
-                "file": (filename, file_bytes, f"audio/{filename.rsplit('.', 1)[-1]}"),
-            }
-            data = {
-                "model": "mistral-large-latest",
-                "diarize": "true",
-                "language": "en",
-                "timestamp_granularities": "segment",
-            }
-            headers = {"Authorization": f"Bearer {settings.mistral_api_key}"}
-            response = await client.post(
-                MISTRAL_TRANSCRIBE_URL,
-                files=files,
-                data=data,
-                headers=headers,
-            )
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as exc:
-        logger.error(
-            "Mistral transcription failed: %s %s — %s",
-            exc.response.status_code,
-            exc.response.reason_phrase,
-            exc.response.text[:500],
+    return await asyncio.to_thread(_transcribe_sync, file_bytes, filename, settings)
+
+
+def _transcribe_sync(file_bytes: bytes, filename: str, settings: Settings) -> dict:
+    ext = filename.rsplit(".", 1)[-1] if "." in filename else "webm"
+    audio_file = File(
+        file_name=filename,
+        content=file_bytes,
+        content_type=f"audio/{ext}",
+    )
+    with Mistral(api_key=settings.mistral_api_key) as mistral:
+        res = mistral.audio.transcriptions.complete(
+            model="voxtral-mini-latest",
+            file=audio_file,
+            diarize=True,
+            language="en",
+            timestamp_granularities=["segment"],
         )
-        return _demo_transcript()
-    except httpx.RequestError as exc:
-        logger.error("Mistral transcription request error: %s", exc)
-        return _demo_transcript()
+    segments = []
+    for seg in res.segments or []:
+        segments.append({
+            "speaker": getattr(seg, "speaker", None),
+            "start": getattr(seg, "start", None),
+            "end": getattr(seg, "end", None),
+            "text": getattr(seg, "text", ""),
+        })
+    return {"text": res.text, "segments": segments}
 
 
 def _demo_transcript() -> dict:
