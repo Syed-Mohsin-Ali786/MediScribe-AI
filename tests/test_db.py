@@ -1,21 +1,17 @@
-import asyncio
-import sys
+import pytest
 from sqlalchemy import text
-from app.database import engine  # Import your SQLAlchemy engine instance
 
-# Fix for Windows asyncio event loop issue with psycopg/asyncpg
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+from app.core.database import engine, run_async
 
+
+@pytest.mark.asyncio
 async def test_connection():
     try:
         async with engine.connect() as conn:
-            # Execute a lightweight query
             result = await conn.execute(text("SELECT 1"))
-            print("✅ Database connection successful! Query result:", result.scalar())
+            assert result.scalar() == 1
     except Exception as e:
-        print("❌ Database connection failed!")
-        print("Error details:", e)
+        pytest.skip(f"Database not available: {e}")
 
 if __name__ == "__main__":
-    asyncio.run(test_connection())
+    run_async(test_connection())

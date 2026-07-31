@@ -65,11 +65,12 @@ async def login(
             detail="Incorrect email or password",
         )
 
-    access_token = create_access_token(user_id=user.id, role=user.role.value)
+    role_str = user.role.value if hasattr(user.role, "value") else user.role
+    access_token = create_access_token(user_id=user.id, role=role_str)
     return LoginResponse(
         access_token=access_token,
         user_id=user.id,
-        role=user.role.value,
+        role=role_str,
         is_approved=user.is_approved,
     )
 
