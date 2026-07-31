@@ -112,6 +112,7 @@ def generate_report_pdf(report: Report, patient: User, doctor: User) -> BytesIO:
             story.append(items)
 
     add_section("Symptoms", _bullet_list(extraction.get("symptoms"), body_style))
+    add_section("Medical History", _bullet_list(extraction.get("medical_history"), body_style))
     add_section("Medications", _medication_lines(extraction.get("medications"), body_style))
     add_section("Recommendations", _bullet_list(extraction.get("recommendations"), body_style))
 
