@@ -1,0 +1,22 @@
+{
+  "acetaminophen": {
+    "validated": true,
+    "notes": "Common analgesic / antipyretic"
+  },
+  "ibuprofen": {
+    "validated": true,
+    "notes": "NSAID"
+  },
+  "amoxicillin": {
+    "validated": true,
+    "notes": "Antibiotic"
+  },
+  "lisinopril": {
+    "validated": true,
+    "notes": "ACE inhibitor"
+  },
+  "metformin": {
+    "validated": true,
+    "notes": "Type 2 diabetes medication"
+  }
+}
