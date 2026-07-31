@@ -1,9 +1,9 @@
+# pyright: reportArgumentType=false, reportCallIssue=false
 from __future__ import annotations
 
-# pyright: reportArgumentType=false, reportCallIssue=false
 from datetime import UTC, datetime
 from io import BytesIO
-from typing import Any, cast
+from typing import Any
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
@@ -42,11 +42,10 @@ def _medication_lines(medications: list[dict[str, Any]] | None, style: Paragraph
         return None
     lines: list[ListItem] = []
     for med in medications:
-        name: str = med.get("name", "Unknown")
-        parts: list[str] = [
+        name = med.get("name", "Unknown")
+        details = " \u2014 ".join(
             str(med[k]) for k in ("dosage", "frequency", "duration") if med.get(k)
-        ]
-        details = " \u2014 ".join(parts)
+        )
         lines.append(ListItem(Paragraph(f"{name} ({details})" if details else name, style)))
     return ListFlowable(lines, bulletType="bullet", start="\u2022")
 
@@ -112,12 +111,12 @@ def generate_report_pdf(report: Report, patient: User, doctor: User) -> BytesIO:
             story.append(Paragraph(title, section_style))
             story.append(items)
 
-    add_section("Symptoms", _bullet_list(cast("list[str] | None", extraction.get("symptoms")), body_style))
-    add_section("Medications", _medication_lines(cast("list[dict[str, Any]] | None", extraction.get("medications")), body_style))
-    add_section("Recommendations", _bullet_list(cast("list[str] | None", extraction.get("recommendations")), body_style))
+    add_section("Symptoms", _bullet_list(extraction.get("symptoms"), body_style))
+    add_section("Medications", _medication_lines(extraction.get("medications"), body_style))
+    add_section("Recommendations", _bullet_list(extraction.get("recommendations"), body_style))
 
-    highlights = _bullet_list(cast("list[str] | None", extraction.get("highlights")), body_style)
-    follow_up = _bullet_list(cast("list[str] | None", extraction.get("follow_up_points")), body_style)
+    highlights = _bullet_list(extraction.get("highlights"), body_style)
+    follow_up = _bullet_list(extraction.get("follow_up_points"), body_style)
     if highlights or follow_up:
         story.append(Paragraph("Highlights & Follow-up", section_style))
         if highlights:
@@ -128,7 +127,7 @@ def generate_report_pdf(report: Report, patient: User, doctor: User) -> BytesIO:
             story.append(Paragraph("<b>Follow-up points:</b>", body_style))
             story.append(follow_up)
 
-    flags: list[dict[str, str]] = cast("list[dict[str, str]]", extraction.get("confidence_flags") or [])
+    flags: list[dict[str, str]] = extraction.get("confidence_flags") or []
     if flags:
         story.append(Paragraph("Confidence flags", section_style))
         flag_lines = _bullet_list(
