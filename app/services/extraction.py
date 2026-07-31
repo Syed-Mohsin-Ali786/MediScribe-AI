@@ -71,35 +71,28 @@ class ClinicalExtraction(BaseModel):
 async def extract_clinical(transcript: dict[str, Any], settings: Settings | None = None) -> dict[str, Any]:
     """Send diarized transcript to Gemini and return structured clinical data.
 
-    Uses strict anti-hallucination prompting with temperature=0 and Pydantic
-    schema enforcement via google-genai structured output.
-    Falls back to demo extraction when no API key is configured or on error.
+    Uses the Interactions API with structured output (JSON schema enforcement).
+    Falls back to demo extraction only when no API key is configured.
     """
     settings = settings or _settings
     transcript_text = transcript.get("text", "")
     if not settings.gemini_api_key:
         return _demo_extraction()
 
-    try:
-        from google import genai
-        from google.genai import types
+    from google import genai
 
-        client = genai.Client(api_key=settings.gemini_api_key)
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=f"Extract clinical details from this transcript:\n\n{transcript_text}",
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_INSTRUCTION,
-                response_mime_type="application/json",
-                response_schema=ClinicalExtraction,
-                temperature=0.0,
-            ),
-        )
-        if response.parsed is None or not isinstance(response.parsed, BaseModel):
-            return _demo_extraction()
-        return response.parsed.model_dump()
-    except Exception:
-        return _demo_extraction()
+    client = genai.Client(api_key=settings.gemini_api_key)
+    interaction = client.interactions.create(
+        model="gemini-3.6-flash",
+        input=f"{SYSTEM_INSTRUCTION}\n\nExtract clinical details from this transcript:\n\n{transcript_text}",
+        response_format={
+            "type": "text",
+            "mime_type": "application/json",
+            "schema": ClinicalExtraction.model_json_schema(),
+        },
+    )
+    result = ClinicalExtraction.model_validate_json(interaction.output_text)
+    return result.model_dump()
 
 
 def _demo_extraction() -> dict[str, Any]:
