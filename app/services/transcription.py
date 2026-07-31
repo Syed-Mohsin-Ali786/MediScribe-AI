@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
+
 import httpx
 
 from app.core.config import Settings, get_settings
+
+logger = logging.getLogger("mediscribe.transcription")
 
 _settings = get_settings()
 
@@ -17,6 +21,7 @@ async def transcribe_audio(file_bytes: bytes, filename: str, settings: Settings 
     """
     settings = settings or _settings
     if not settings.mistral_api_key:
+        logger.warning("No MISTRAL_API_KEY configured — using demo transcript")
         return _demo_transcript()
 
     try:
@@ -39,7 +44,16 @@ async def transcribe_audio(file_bytes: bytes, filename: str, settings: Settings 
             )
             response.raise_for_status()
             return response.json()
-    except (httpx.HTTPStatusError, httpx.RequestError):
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "Mistral transcription failed: %s %s — %s",
+            exc.response.status_code,
+            exc.response.reason_phrase,
+            exc.response.text[:500],
+        )
+        return _demo_transcript()
+    except httpx.RequestError as exc:
+        logger.error("Mistral transcription request error: %s", exc)
         return _demo_transcript()
 
 

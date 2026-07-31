@@ -1,115 +1,108 @@
 from __future__ import annotations
 
-import json
+from typing import Any
 
-import httpx
+from pydantic import BaseModel, Field
 
 from app.core.config import Settings, get_settings
 
 _settings = get_settings()
 
-GEMINI_URL = (
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent"
-)
+SYSTEM_INSTRUCTION = """\
+You are a strict clinical information extraction engine. Your sole job is to convert \
+doctor-patient conversation transcripts into a structured JSON payload.
 
-EXTRACTION_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "symptoms": {"type": "array", "items": {"type": "string"}},
-        "medical_history": {"type": "array", "items": {"type": "string"}},
-        "diagnosis": {"type": "string"},
-        "medications": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string"},
-                    "dosage": {"type": "string"},
-                    "frequency": {"type": "string"},
-                    "duration": {"type": "string"},
-                },
-                "required": ["name"],
-            },
-        },
-        "recommendations": {"type": "array", "items": {"type": "string"}},
-        "soap": {
-            "type": "object",
-            "properties": {
-                "subjective": {"type": "string"},
-                "objective": {"type": "string"},
-                "assessment": {"type": "string"},
-                "plan": {"type": "string"},
-            },
-            "required": ["subjective", "objective", "assessment", "plan"],
-        },
-        "highlights": {"type": "array", "items": {"type": "string"}},
-        "follow_up_points": {"type": "array", "items": {"type": "string"}},
-        "confidence_flags": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "field": {"type": "string"},
-                    "reason": {"type": "string"},
-                },
-                "required": ["field", "reason"],
-            },
-        },
-    },
-    "required": ["symptoms", "diagnosis", "medications", "soap", "confidence_flags"],
-}
+CRITICAL EXTRACTION RULES:
+1. STRICT TRUTH ONLY: Extract ONLY information explicitly stated in the conversation transcript.
+2. NO INFERENCES: NEVER assume or infer diagnoses, symptoms, or plans that were not directly \
+mentioned by the doctor or patient (e.g., do NOT infer "Viral upper respiratory infection" if \
+only "headache" was stated).
+3. ABSENT DATA: If a field (like Objective physical findings, Assessment, or Diagnosis) was not \
+explicitly discussed in the transcript, return an empty string "" or an empty list [].
+4. CONFIDENCE FLAGS: If you must capture an ambiguity, add an entry to `confidence_flags` \
+explaining why a field is uncertain or missing.
+5. NO FLORID TEXT: Keep extracted values concise, professional, and directly rooted in the transcript.
+"""
 
 
-async def extract_clinical(transcript: dict, settings: Settings | None = None) -> dict:
-    """Send diarized transcript to Gemini 3.6 Flash and return structured clinical data."""
+class SoapNote(BaseModel):
+    subjective: str = Field(
+        description="Patient reported history, symptoms, and complaints explicitly stated."
+    )
+    objective: str = Field(
+        description="Vital signs and physical exam findings directly mentioned by doctor. Empty if none."
+    )
+    assessment: str = Field(
+        description="Explicit diagnosis stated by the doctor. Leave empty string if no diagnosis was stated."
+    )
+    plan: str = Field(
+        description="Explicit treatment, medication instructions, or next steps prescribed by the doctor."
+    )
+
+
+class Medication(BaseModel):
+    name: str = Field(description="Name of the prescribed drug.")
+    dosage: str = Field(default="", description="Dosage if explicitly stated.")
+    frequency: str = Field(default="", description="Frequency if explicitly stated.")
+    duration: str = Field(default="", description="Duration if explicitly stated.")
+
+
+class ConfidenceFlag(BaseModel):
+    field: str = Field(description="The JSON field name that has ambiguity.")
+    reason: str = Field(description="Explanation of why the field is ambiguous or missing.")
+
+
+class ClinicalExtraction(BaseModel):
+    soap: SoapNote
+    symptoms: list[str] = Field(description="List of symptoms explicitly stated by the patient.")
+    medical_history: list[str] = Field(
+        default_factory=list, description="Medical history explicitly mentioned."
+    )
+    diagnosis: str = Field(
+        description="Explicitly stated diagnosis. Empty string if not mentioned."
+    )
+    medications: list[Medication] = Field(default_factory=list)
+    recommendations: list[str] = Field(default_factory=list)
+    highlights: list[str] = Field(default_factory=list)
+    follow_up_points: list[str] = Field(default_factory=list)
+    confidence_flags: list[ConfidenceFlag] = Field(default_factory=list)
+
+
+async def extract_clinical(transcript: dict[str, Any], settings: Settings | None = None) -> dict[str, Any]:
+    """Send diarized transcript to Gemini and return structured clinical data.
+
+    Uses strict anti-hallucination prompting with temperature=0 and Pydantic
+    schema enforcement via google-genai structured output.
+    Falls back to demo extraction when no API key is configured or on error.
+    """
     settings = settings or _settings
     transcript_text = transcript.get("text", "")
     if not settings.gemini_api_key:
-        return _demo_extraction(transcript_text)
-
-    prompt = (
-        "You are a clinical documentation assistant. Extract a structured clinical note "
-        "from the following doctor-patient conversation. "
-        "Return JSON matching the provided schema exactly.\n\n"
-        f"Transcript:\n{transcript_text}\n"
-    )
-
-    payload = {
-        "contents": [
-            {
-                "parts": [
-                    {"text": prompt},
-                ],
-            },
-        ],
-        "generationConfig": {
-            "response_mime_type": "application/json",
-            "response_schema": EXTRACTION_SCHEMA,
-        },
-    }
+        return _demo_extraction()
 
     try:
-        async with httpx.AsyncClient(timeout=90.0) as client:
-            response = await client.post(
-                GEMINI_URL,
-                params={"key": settings.gemini_api_key},
-                json=payload,
-                headers={"Content-Type": "application/json"},
-            )
-            response.raise_for_status()
-            data = response.json()
+        from google import genai
+        from google.genai import types
 
-        candidates = data.get("candidates", [])
-        if not candidates:
-            return _demo_extraction(transcript_text)
+        client = genai.Client(api_key=settings.gemini_api_key)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=f"Extract clinical details from this transcript:\n\n{transcript_text}",
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_INSTRUCTION,
+                response_mime_type="application/json",
+                response_schema=ClinicalExtraction,
+                temperature=0.0,
+            ),
+        )
+        if response.parsed is None or not isinstance(response.parsed, BaseModel):
+            return _demo_extraction()
+        return response.parsed.model_dump()
+    except Exception:
+        return _demo_extraction()
 
-        text = candidates[0]["content"]["parts"][0]["text"]
-        return json.loads(text)
-    except (httpx.HTTPStatusError, httpx.RequestError, json.JSONDecodeError, KeyError, IndexError):
-        return _demo_extraction(transcript_text)
 
-
-def _demo_extraction(transcript_text: str) -> dict:
+def _demo_extraction() -> dict[str, Any]:
     return {
         "symptoms": ["sore throat", "fever", "headache", "body aches"],
         "medical_history": [],
@@ -128,7 +121,7 @@ def _demo_extraction(transcript_text: str) -> dict:
                 "Patient reports sore throat and fever for two days, accompanied by headache "
                 "and body aches. Denies cough and shortness of breath."
             ),
-            "objective": "No physical exam data recorded in audio.",
+            "objective": "",
             "assessment": "Acute pharyngitis, likely viral etiology.",
             "plan": "Acetaminophen 500 mg every 6 hours PRN. Rest and fluids. Follow up if symptoms worsen.",
         },
