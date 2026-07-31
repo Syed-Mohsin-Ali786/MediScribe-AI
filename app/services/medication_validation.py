@@ -57,6 +57,14 @@ async def _rxnorm_lookup(name: str) -> dict | None:
     return None
 
 
+_VAGUE_PATTERNS = ("unspecified", "unknown", "not stated", "not mentioned", "not captured")
+
+
+def _is_vague_name(name: str) -> bool:
+    lower = name.lower()
+    return any(p in lower for p in _VAGUE_PATTERNS)
+
+
 async def validate_medications(medications: list[dict]) -> dict:
     """Validate a list of medication dicts against RxNorm, falling back to local JSON.
 
@@ -70,6 +78,18 @@ async def validate_medications(medications: list[dict]) -> dict:
         name = med.get("name", "")
         if not name:
             results.append({"medication": med, "validated": False, "reason": "missing name"})
+            all_valid = False
+            continue
+
+        if _is_vague_name(name):
+            results.append({
+                "medication": med,
+                "name": name,
+                "normalized": _normalize_name(name),
+                "validated": False,
+                "source": "none",
+                "reason": "Medication name not explicitly stated in transcript — physician must fill in",
+            })
             all_valid = False
             continue
 

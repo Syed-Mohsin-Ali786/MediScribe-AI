@@ -22,6 +22,12 @@ explicitly discussed in the transcript, return an empty string "" or an empty li
 4. CONFIDENCE FLAGS: If you must capture an ambiguity, add an entry to `confidence_flags` \
 explaining why a field is uncertain or missing.
 5. NO FLORID TEXT: Keep extracted values concise, professional, and directly rooted in the transcript.
+6. MEDICATION NAMES: If the doctor prescribes or administers a medication but its specific name \
+is never stated in the transcript (e.g., "I'm prescribing this medicine"), you MUST still list it \
+in medications with the generic description, AND add a confidence_flag with field "medications" \
+explaining that the drug name was not captured and the physician must fill it in.
+7. NON-CLINICAL CONTENT: Ignore any content that is not part of the medical consultation (e.g., \
+YouTube outros, subscribe requests, channel promotions). Only extract clinical information.
 """
 
 
