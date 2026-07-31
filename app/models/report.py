@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from enum import Enum as PyEnum
+from enum import StrEnum
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from app.models.user import User
 
 
-class ReportStatus(str, PyEnum):
+class ReportStatus(StrEnum):
     DRAFT_GENERATED = "draft_generated"
     APPROVED = "approved"
 
