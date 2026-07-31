@@ -4,16 +4,14 @@ import asyncio
 import selectors
 import sys
 from collections.abc import AsyncGenerator, Coroutine
-from typing import Any, TypeVar
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import get_settings
 
-_T = TypeVar("_T")
 
-
-def run_async(coro: Coroutine[Any, Any, _T]) -> _T:
+def run_async[T](coro: Coroutine[Any, Any, T]) -> T:
     """Run a coroutine on an event loop psycopg can use.
 
     Windows defaults to the ProactorEventLoop, which psycopg async cannot run on.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr
@@ -32,6 +33,6 @@ class PendingDoctorOut(BaseModel):
     specialization: str | None = None
     role: UserRole
     is_approved: bool
-    created_at: str
+    created_at: datetime
 
     model_config = {"from_attributes": True}

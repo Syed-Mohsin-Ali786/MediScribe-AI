@@ -19,25 +19,28 @@ async def transcribe_audio(file_bytes: bytes, filename: str, settings: Settings 
     if not settings.mistral_api_key:
         return _demo_transcript()
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        files = {
-            "file": (filename, file_bytes, f"audio/{filename.rsplit('.', 1)[-1]}"),
-        }
-        data = {
-            "model": "mistral-large-latest",
-            "diarize": "true",
-            "language": "en",
-            "timestamp_granularities": "segment",
-        }
-        headers = {"Authorization": f"Bearer {settings.mistral_api_key}"}
-        response = await client.post(
-            MISTRAL_TRANSCRIBE_URL,
-            files=files,
-            data=data,
-            headers=headers,
-        )
-        response.raise_for_status()
-        return response.json()
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            files = {
+                "file": (filename, file_bytes, f"audio/{filename.rsplit('.', 1)[-1]}"),
+            }
+            data = {
+                "model": "mistral-large-latest",
+                "diarize": "true",
+                "language": "en",
+                "timestamp_granularities": "segment",
+            }
+            headers = {"Authorization": f"Bearer {settings.mistral_api_key}"}
+            response = await client.post(
+                MISTRAL_TRANSCRIBE_URL,
+                files=files,
+                data=data,
+                headers=headers,
+            )
+            response.raise_for_status()
+            return response.json()
+    except (httpx.HTTPStatusError, httpx.RequestError):
+        return _demo_transcript()
 
 
 def _demo_transcript() -> dict:

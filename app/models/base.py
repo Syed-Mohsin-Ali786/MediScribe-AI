@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import uuid as _uuid
 from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlalchemy import DateTime
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -21,8 +22,8 @@ class TimestampMixin:
 
 
 class UUIDMixin:
-    id: Mapped[UUID] = mapped_column(
-        UUID(as_uuid=True),
+    id: Mapped[_uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
         primary_key=True,
         default=uuid4,
     )

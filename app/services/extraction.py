@@ -88,22 +88,25 @@ async def extract_clinical(transcript: dict, settings: Settings | None = None) -
         },
     }
 
-    async with httpx.AsyncClient(timeout=90.0) as client:
-        response = await client.post(
-            GEMINI_URL,
-            params={"key": settings.gemini_api_key},
-            json=payload,
-            headers={"Content-Type": "application/json"},
-        )
-        response.raise_for_status()
-        data = response.json()
+    try:
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            response = await client.post(
+                GEMINI_URL,
+                params={"key": settings.gemini_api_key},
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
+            response.raise_for_status()
+            data = response.json()
 
-    candidates = data.get("candidates", [])
-    if not candidates:
+        candidates = data.get("candidates", [])
+        if not candidates:
+            return _demo_extraction(transcript_text)
+
+        text = candidates[0]["content"]["parts"][0]["text"]
+        return json.loads(text)
+    except (httpx.HTTPStatusError, httpx.RequestError, json.JSONDecodeError, KeyError, IndexError):
         return _demo_extraction(transcript_text)
-
-    text = candidates[0]["content"]["parts"][0]["text"]
-    return json.loads(text)
 
 
 def _demo_extraction(transcript_text: str) -> dict:

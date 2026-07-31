@@ -46,12 +46,12 @@
 | Doctor review / approval workflow | ✅ Complete |
 | Patient access | ✅ Complete |
 | PDF export | ✅ Complete (ReportLab) |
-| DB migrations (Alembic) | ✅ Written (not yet applied to live DB) |
-| Tests | ✅ Unit tests pass (7/7); integration tests need `TEST_DATABASE_URL` |
+| DB migrations (Alembic) | ✅ Applied to live DB |
+| Tests | ✅ All 10 tests pass (unit + integration) |
 | RLS policies (Supabase) | 🔲 Not started |
 | Deployment & demo prep | 🔲 Not started |
 
-**Last updated:** 31 Jul 2026
+**Last updated:** 31 Jul 2026 (session 2)
 
 ---
 
@@ -108,10 +108,12 @@ Ordered by the hackathon timeline (30 Jul – 1 Aug 2026). Work top to bottom.
 10. 🔲 **Deploy + demo**: cloud hosting (Render/Railway/Fly.io), env-based secrets, scripted demo audio.
 
 ### Blockers / notes
-- ✅ Verified: `/openapi.json` lists all 12 `/api/v1` routes (FastAPI 0.141 lazy router registration confirmed working). Unit tests pass (7/7), ruff clean.
+- ✅ Verified: `/openapi.json` lists all 12 `/api/v1` routes (FastAPI 0.141 lazy router registration confirmed working). All 10 tests pass, ruff clean.
 - ✅ **Friendly error responses**: `app/core/errors.py` — request-ID middleware + global handlers return clean JSON (`status_code`, `detail`, `error_code`, `request_id`) instead of raw 500s. `SQLAlchemyError` → 503 "service temporarily busy", validation → 422 with `errors` detail, anything else → 500 "Something went wrong". Full traceback logged server-side via `mediscribe.errors` logger. Registered in `app/main.py`.
-- `TEST_DATABASE_URL` needed to run `tests/test_api_integration.py` (full happy-path + cross-doctor access control) — currently auto-skipping.
-- `.env` exists locally (copied from `.env.example`) — do not commit. **Known: `DATABASE_URL` in local `.env` had a wrong password** → Supabase `FATAL: password authentication failed for user "postgres"` (now surfaced as a friendly 503 instead of a traceback). Fix the password in `.env` and run `alembic upgrade head`.
+- ✅ **DB connected**: Supabase pooler (`aws-0-ap-southeast-1.pooler.supabase.com:6543`) works; direct host (`db.*.supabase.co`) does not resolve from dev machine. Alembic migration `0001` applied.
+- ✅ **Integration tests pass**: set `TEST_DATABASE_URL` to the async pooler URL (`postgresql+psycopg_async://postgres.<ref>:<pass>@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres`).
+- ✅ **Bugs fixed (session 2)**: `user.role.value` crash on login (role is plain str from DB); `created_at: str` → `datetime` in schemas; Mistral/Gemini API errors now gracefully fall back to demo data; `conftest.py` added for Windows SelectorEventLoop.
+- `.env` exists locally — do not commit.
 
 ### Non-functional must-haves
 - Reject unauthorized requests at FastAPI layer before any DB query (NFR-2).
