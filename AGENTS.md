@@ -22,7 +22,7 @@
 | DB | PostgreSQL via Supabase | 18.x (Supabase-managed) |
 | DB driver | psycopg (v3) | 3.3.x |
 | Auth | Supabase Auth, JWT with custom `role` / `user_id` claims | n/a |
-| Speech-to-Text | Mistral `/v1/audio/transcriptions` (`diarize: true`) | n/a (API) |
+| Speech-to-Text | Mistral Voxtral `/v1/audio/transcriptions` (`diarize: true`) | n/a (API) |
 | Clinical Extraction | Gemini 3.6 Flash (structured JSON) | n/a (API) |
 | Medication Validation | RxNorm REST API + local JSON fallback | n/a (API) |
 | PDF Export | Backend-generated (WeasyPrint/ReportLab — TBD) | TBD |
@@ -51,7 +51,7 @@
 | RLS policies (Supabase) | 🔲 Not started |
 | Deployment & demo prep | 🔲 Not started |
 
-**Last updated:** 31 Jul 2026 (session 2)
+**Last updated:** 1 Aug 2026 (session 3)
 
 ---
 
@@ -171,4 +171,7 @@ uvicorn app.main:app --reload   # docs at http://localhost:8000/docs
   - **FastAPI 0.141 lazy router registration**: included routers appear as `_IncludedRouter` in `app.routes`; endpoints are live in OpenAPI/runtime, so verify with `/openapi.json`.
   - **String enums** (`String(50)`) for `users.role` and `reports.status` instead of Postgres `ENUM` types — avoids ALTER-type migration friction.
   - **`run_async()` helper in `app/core/database.py`**: standalone async entry points (`app/seed.py`, `alembic/env.py`) must run on `asyncio.SelectorEventLoop` on Windows — psycopg async cannot run on the default ProactorEventLoop. Uvicorn already selects a compatible loop for the API, so only scripts needed the fix. Use `run_async(coro)` instead of `asyncio.run(coro)`.
+  - **`google-genai` pinned to `>=2.0.0,<3.0.0`** (installed 2.16.0): the legacy Interactions API schema was sunset 8 Jun 2026, so SDK 1.x now 400s. `extraction.py` was already written for the new schema (`response_format={"type":"text","mime_type":"application/json","schema": Model.model_json_schema()}` + `interaction.output_text`) — only the SDK needed upgrading, no code change. Confirmed against Gemini docs: Pydantic `model_json_schema()` (incl. `$ref`/`$defs`) is supported.
+  - **Mistral transcription has NO `prompt` param**: `mistral.audio.transcriptions.complete()` rejects `prompt=` with `TypeError` (verified against installed `mistralai` 1.x signature). The old `prompt=...` line crashed every live transcription — removed. Only `model/file/diarize/language/timestamp_granularities/...` are valid kwargs.
+  - **Voxtral does NOT support Urdu** (13 languages: en, zh, hi, es, ar, fr, pt, ru, de, ja, ko, it, nl). Urdu speech auto-detects/renders as Hindi (Devanagari); there is no script-control lever, so we use default auto-detect. True Urdu output would need a different ASR provider or a Hindi→Urdu post-processing step — out of scope for the hackathon. PDF stays English regardless (built from Gemini's English extraction).
 - **Env quirk**: `DATABASE_URL` uses `postgresql+psycopg://`; the async engine and Alembic env convert it to `postgresql+psycopg_async://` at import time.
