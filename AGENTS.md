@@ -8,7 +8,7 @@
 
 - **Full spec:** [`MediScribe_AI_SRS.md`](./MediScribe_AI_SRS.md) (v1.0, 31 Jul 2026) — read it for detailed requirements, schema, and API contracts.
 - **Context:** Hackathon submission (Generative AI Track), deadline **1 Aug 2026, 11:59 PM**.
-- **Roles:** `Admin`, `Doctor`, `Patient`. Patients cannot self-register — only doctors (after admin approval) can invite them.
+- **Roles:** `Admin`, `Doctor`, `Patient`. No public self-registration — the **admin creates doctors**, and doctors create their own patients.
 
 ### Tech Stack (latest versions, checked Jul 2026)
 | Layer | Tech | Version |
@@ -51,9 +51,9 @@
 | RLS policies (Supabase) | 🔲 Not started |
 | Deployment & demo prep | 🔲 Not started |
 
-**Last updated:** 1 Aug 2026 (admin console upgraded to a full **live platform dashboard**: real-time stats via `GET /admin/stats`, user directory via `GET /admin/users`, live integration health via `GET /admin/integrations`, and **analytics via `GET /admin/analytics`** — 14-day report generation/approval line chart, cumulative doctor/patient growth line chart, per-doctor report bar chart, approval rate. Frontend `/admin/analytics` route uses **Recharts** (installed), styled to the editorial theme; `/admin` polls stats/users/integrations every 20s. Fixed Next.js `scroll-behavior: smooth` hydration warning with `data-scroll-behavior="smooth"` on `<html>` in `app/layout.tsx`. **Note:** hydration mismatch errors in the dev console are from the Yandex/browser extension injecting `cz-shortcut-listen`/`data-yd-metadata` attributes — not app bugs.)
+**Last updated:** 1 Aug 2026 (transcript display upgrade — **speaker diarization is now content-aware**: the old "first speaker = Doctor" heuristic mislabeled consultations whenever the patient spoke first; `app/services/transcription.py::classify_speaker` now reads each utterance (question starters/medical guidance → Doctor, symptom descriptions/responses → Patient), with per-cluster majority voting so a real voice never flip-flops. Added a **bilingual transcript**: every segment now carries `text_en` (English) + `text_ur` (Urdu script), translated by Gemini at generation time with an offline glossary fallback (`app/services/translation.py`); the frontend `Transcript` component has a language select (**As spoken · English · اردو**, RTL for Urdu) and the patient report page now shows the transcript too. Demo reports re-seeded idempotently with bilingual segments; 14 tests pass, ruff clean, frontend build clean. Earlier today: demo audio re-seeded (Hindi 2-voice + Romanized Urdu transcripts live); **doctor onboarding via admin** — `POST /auth/register` removed, admin creates `POST /admin/doctors`, edits `PATCH /admin/users/{id}`, deletes `DELETE /admin/users/{id}` (guard: doctor with patients/reports blocked); admin console = "Onboard doctor" + Doctors & Patients directory with Edit modal + Delete; live dashboard + analytics (`/admin/analytics`, Recharts); `data-scroll-behavior="smooth"` fix; "invite"→"add/create patient" wording.) Latest: **all 9 live reports backfilled** (`app/backfill_translations.py`) with `text_en`/`text_ur` + content-corrected `speaker` labels via a new combined LLM annotation path — `translation.py` now also classifies `Doctor`/`Patient` per segment (Gemini structured output, **Mistral instant failover** since the Gemini free tier 429s), `_SegmentTranslation.speaker`, `translate_transcript(force=True)` re-annotates everything, and the backfill re-labels any degenerate all-one-speaker transcript. Verified via API: every report shows correct D/P alternation (patient-speaks-first now labeled correctly) and full English+Urdu translations; 14 tests pass, ruff clean. Fix: **report generation 500 → `extract_clinical` Gemini 429** — `app/services/extraction.py` now falls back to **Mistral** (`_extract_mistral`, same `ClinicalExtraction` JSON schema) and only then to the demo extraction, so `/generate-report` never dies when Gemini rate-limits. Verified live: 201 → `draft_generated`, transcript + translations + Mistral-extracted symptoms/medications present.) UI pass: **landing "Our Doctors" section** replaces the old roles block — new public `GET /api/v1/public/doctors` (approved doctors, no auth) + `frontend/components/landing-doctors.tsx` (doctor count, compact cards that expand to full details, "Contact Now" modal with name/email/age/message form). **Admin can no longer edit patients** (`PATCH /admin/users/{id}` now 400s for non-doctors; Edit button hidden for patient rows) and patients now show **age** (computed from existing `dob`, `ageFromDob` in `format.ts`) in the admin directory and doctor patient cards; `AdminUserOut.dob` added. 14 tests pass, ruff clean, `npm run build` clean.) **Contact messages inbox**: landing "Contact Now" form now actually persists — new `contact_messages` table (migration `0002`), public `POST /api/v1/public/contact` (no auth, validates the doctor exists), `GET /api/v1/doctor/messages` (+ `?unread_only`) and `PATCH /api/v1/doctor/messages/{id}/read` (doctor-owned). Frontend: `/doctor/messages` inbox page (name/email/age/message, Mark-read, New badge), Messages nav item with a live unread-count badge (polled 20s in `app-shell.tsx`), and an unread banner on the doctor overview. Verified live: contact → 201 → shows in Dr. Rohan's inbox.
 
-**Pending from earlier session:** seed demo transcripts are already converted to **Romanized Urdu (Hindustani)** with per-speaker Hindi TTS (`app/seed.py`) but the live DB still holds the old English demo reports — delete old Ananya reports from Supabase + `media/demo_ananya_*.mp3`, re-run `python -m app.seed` to regenerate Urdu 2-speaker audio with real timestamps. Mistral `language` param removed for auto-detect.
+**Pending from earlier session:** (done) seed demo reports re-seeded with **Romanized Urdu (Hindustani)** transcripts + **Hindi 2-speaker TTS** (Doctor = male `hi-IN-MadhurNeural`, Patient = female `hi-IN-SwaraNeural`). Ananya's old English demo reports + real generated reports were deleted from Supabase and `media/`; `python -m app.seed` recreated 2 demo reports (approved `demo_ananya_01.mp3` 62.1s / 7 segments, draft `demo_ananya_02.mp3` 26s / 3 segments) with real ffmpeg-concat per-segment timestamps. Verified: audio served (`audio/mpeg`), patient sees only approved report, `GET /records/{id}` returns Urdu segments with start/end, PDF export works for doctor + patient, tests pass.
 
 ---
 
@@ -61,7 +61,7 @@
 
 | ID | Feature | Status |
 |---|---|---|
-| FR-1 | Auth & role management (doctor self-register, admin approve, JWT role claims) | ✅ |
+| FR-1 | Auth & role management (admin creates doctors; JWT role claims) | ✅ |
 | FR-2 | Patient management (doctor-owned: create, invite, list) | ✅ |
 | FR-3 | AI report generation (upload → Mistral diarize → Gemini extraction → RxNorm validate → persist draft) | ✅ |
 | FR-4 | Doctor review & approval (fetch draft, edit fields, approve) | ✅ |
@@ -75,8 +75,10 @@
 
 | Method | Endpoint | Role | Status |
 |---|---|---|---|
-| POST | `/auth/register` | Public | ✅ |
 | POST | `/auth/login` | Public | ✅ |
+| POST | `/admin/doctors` | Admin | ✅ |
+| PATCH | `/admin/users/{user_id}` | Admin | ✅ |
+| DELETE | `/admin/users/{user_id}` | Admin | ✅ |
 | GET | `/admin/pending-doctors` | Admin | ✅ |
 | PATCH | `/admin/users/{user_id}/promote-to-doctor` | Admin | ✅ |
 | DELETE | `/admin/users/{user_id}/reject` | Admin | ✅ |
@@ -107,7 +109,7 @@ Ordered by the hackathon timeline (30 Jul – 1 Aug 2026). Work top to bottom.
 
 1. ✅ **Scaffold backend**: FastAPI app layout, `pyproject.toml`/`requirements.txt` (pin versions from §1), config + env loading, Supabase Postgres connection via SQLAlchemy + psycopg.
 2. ✅ **Models + migrations**: `users` and `reports` tables per SRS §5 (UUID PKs, enums, JSONB columns, self-referential `doctor_id`). Alembic migration `0001` written; run `alembic upgrade head` once a DB URL is live.
-3. ✅ **Auth layer**: register/login, JWT `role` claim decoding, `require_role(...)` dependencies; admin approve/reject flow.
+3. ✅ **Auth layer**: login, JWT `role` claim decoding, `require_role(...)` dependencies; admin creates/edits doctors directly (`/admin/doctors`, `/admin/users/{id}`).
 4. ✅ **Patient management**: doctor creates/invites patients, lists own patients. Doctor sets the patient's login password at invite time (`POST /doctor/patients` requires `password`). Invite email stubbed/manual for demo.
 5. ✅ **AI pipeline**: `/generate-report` — Mistral transcription (diarized) → Gemini structured extraction → RxNorm validation (with local JSON fallback) → persist `status = draft_generated`. Offline demo transcripts/extractions kick in when API keys are absent.
 6. ✅ **Review workflow**: fetch draft, PATCH edits, POST approve (`status = approved`, set `approved_at`).

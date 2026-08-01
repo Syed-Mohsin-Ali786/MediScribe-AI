@@ -6,12 +6,11 @@ from app.schemas.report import (
     ReportOut,
     ReportUpdate,
 )
-from app.schemas.user import DoctorRegister, PendingDoctorOut, UserMe
+from app.schemas.user import PendingDoctorOut, UserMe
 
 __all__ = [
     "LoginRequest",
     "LoginResponse",
-    "DoctorRegister",
     "PendingDoctorOut",
     "UserMe",
     "PatientCreate",

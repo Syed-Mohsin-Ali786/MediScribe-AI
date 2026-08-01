@@ -42,15 +42,16 @@ async def client():
     await engine.dispose()
 
 
-async def _register_doctor(client: httpx.AsyncClient) -> dict:
+async def _create_doctor(client: httpx.AsyncClient, admin_token: str, email: str, name: str) -> dict:
     resp = await client.post(
-        "/api/v1/auth/register",
+        "/api/v1/admin/doctors",
         json={
-            "name": "Dr. Alex Rivera",
-            "email": "doctor@test.ai",
+            "name": name,
+            "email": email,
             "password": "DoctorPass!123",
             "specialization": "General Practice",
         },
+        headers=_auth(admin_token),
     )
     assert resp.status_code == 201, resp.text
     return resp.json()
@@ -84,23 +85,13 @@ def _auth(token: str) -> dict:
 async def test_full_workflow(client) -> None:
     ac, session_factory = client
 
-    # 1. Doctor self-registers as pending.
-    await _register_doctor(ac)
+    # 1. Admin creates the doctor directly (no self-registration).
     await _seed_admin(session_factory)
 
     admin_token = await _login(ac, "admin@test.ai", "AdminPass!123")
+    await _create_doctor(ac, admin_token, "doctor@test.ai", "Dr. Alex Rivera")
 
-    # 2. Admin approves the doctor.
-    pending = await ac.get("/api/v1/admin/pending-doctors", headers=_auth(admin_token))
-    assert pending.status_code == 200, pending.text
-    doctor_id = pending.json()[0]["id"]
-    promote = await ac.patch(
-        f"/api/v1/admin/users/{doctor_id}/promote-to-doctor", headers=_auth(admin_token)
-    )
-    assert promote.status_code == 200, promote.text
-    assert promote.json()["role"] == "doctor"
-
-    # 3. Doctor creates a patient.
+    # 2. Doctor logs in immediately (approved by default).
     doctor_token = await _login(ac, "doctor@test.ai", "DoctorPass!123")
     create_patient = await ac.post(
         "/api/v1/doctor/patients",
@@ -172,15 +163,9 @@ async def test_full_workflow(client) -> None:
 @pytest.mark.asyncio
 async def test_doctor_cannot_access_other_doctors_report(client) -> None:
     ac, session_factory = client
-    await _register_doctor(ac)
     await _seed_admin(session_factory)
     admin_token = await _login(ac, "admin@test.ai", "AdminPass!123")
-    doctor_id = (await ac.get("/api/v1/admin/pending-doctors", headers=_auth(admin_token))).json()[0][
-        "id"
-    ]
-    await ac.patch(
-        f"/api/v1/admin/users/{doctor_id}/promote-to-doctor", headers=_auth(admin_token)
-    )
+    await _create_doctor(ac, admin_token, "doctor@test.ai", "Dr. Alex Rivera")
 
     doctor_token = await _login(ac, "doctor@test.ai", "DoctorPass!123")
     patient = (
@@ -199,22 +184,8 @@ async def test_doctor_cannot_access_other_doctors_report(client) -> None:
         )
     ).json()
 
-    # Second doctor registers and gets approved.
-    await ac.post(
-        "/api/v1/auth/register",
-        json={
-            "name": "Dr. Second",
-            "email": "second@test.ai",
-            "password": "DoctorPass!123",
-            "specialization": "Internal Medicine",
-        },
-    )
-    second_id = (
-        await ac.get("/api/v1/admin/pending-doctors", headers=_auth(admin_token))
-    ).json()[0]["id"]
-    await ac.patch(
-        f"/api/v1/admin/users/{second_id}/promote-to-doctor", headers=_auth(admin_token)
-    )
+    # Second doctor is created directly by the admin.
+    await _create_doctor(ac, admin_token, "second@test.ai", "Dr. Second")
     second_token = await _login(ac, "second@test.ai", "DoctorPass!123")
 
     resp = await ac.get(f"/api/v1/records/{report['id']}", headers=_auth(second_token))

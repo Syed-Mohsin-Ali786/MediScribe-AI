@@ -11,6 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base, TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
+    from app.models.contact_message import ContactMessage
     from app.models.report import Report
 
 
@@ -61,4 +62,9 @@ class User(Base, UUIDMixin, TimestampMixin):
         "Report",
         foreign_keys="Report.doctor_id",
         back_populates="doctor",
+    )
+    contact_messages: Mapped[list[ContactMessage]] = relationship(
+        "ContactMessage",
+        back_populates="doctor",
+        cascade="all, delete-orphan",
     )

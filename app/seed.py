@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import os
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -13,6 +14,7 @@ from app.models import Base
 from app.models.report import Report, ReportStatus
 from app.models.user import User, UserRole
 from app.services.supabase_storage import MEDIA_DIR
+from app.services.translation import apply_glossary
 
 DEMO_DOCTOR_EMAIL = os.getenv("DEMO_DOCTOR_EMAIL", "dr.rohan@mediscribe.ai")
 DEMO_DOCTOR_PASSWORD = os.getenv("DEMO_DOCTOR_PASSWORD", "demo1234")
@@ -180,13 +182,13 @@ async def seed() -> None:
                     "halki dawa aur kam namak wali diet shuru kar rahi hoon. Do hafte mein wapas milte hain."
                 ),
                 "segments": [
-                    {"speaker": "Doctor", "start": 0.0, "end": 0.0, "text": "Namaste Ananya, aapke blood work aa gaye hain. Chaliye baat karte hain."},
-                    {"speaker": "Patient", "start": 0.0, "end": 0.0, "text": "Shukriya doctor. Pichhle teen hafton se mujhe kaafi thakan mehsoos ho rahi hai, aur sar mein dard bhi rehta hai jo jaata nahi."},
-                    {"speaker": "Doctor", "start": 0.0, "end": 0.0, "text": "Bataiye, sar ka dard kahan hota hai? Subah zyada hota hai ya kisi aur waqt?"},
-                    {"speaker": "Patient", "start": 0.0, "end": 0.0, "text": "Zyadatar sar ke peechhe, subah ke waqt. Aur jab main turant khadi hoti hoon to halka chakkar aa jaata hai."},
-                    {"speaker": "Doctor", "start": 0.0, "end": 0.0, "text": "Kya haathon ya pairon mein soojan aayi hai?"},
-                    {"speaker": "Patient", "start": 0.0, "end": 0.0, "text": "Anguthiyaan tight lagne lagi hain, aur raat ko baar baar peshaab ke liye uthna padta hai."},
-                    {"speaker": "Doctor", "start": 0.0, "end": 0.0, "text": "Aaj aapka blood pressure 158 bay 96 hai, aur peshaab ki jaanch mein protein mila hai. Main aapko halki dawa aur kam namak wali diet shuru kar rahi hoon. Do hafte mein wapas milte hain."},
+                    {"speaker": "Doctor", "start": 0.0, "end": 0.0, "text": "Namaste Ananya, aapke blood work aa gaye hain. Chaliye baat karte hain.", "text_en": "Hello Ananya, your blood work results are in. Let's have a talk about them.", "text_ur": "نمستے اننیا، آپ کے خون کے ٹیسٹ کے نتائج آ گئے ہیں۔ چلیے بات کرتے ہیں۔"},
+                    {"speaker": "Patient", "start": 0.0, "end": 0.0, "text": "Shukriya doctor. Pichhle teen hafton se mujhe kaafi thakan mehsoos ho rahi hai, aur sar mein dard bhi rehta hai jo jaata nahi.", "text_en": "Thank you doctor. For the last three weeks I have been feeling very tired, and I keep having a headache that doesn't go away.", "text_ur": "شکریہ ڈاکٹر۔ پچھلے تین ہفتوں سے مجھے کافی تھکن محسوس ہو رہی ہے، اور سر میں بھی درد رہتا ہے جو جاتا نہیں۔"},
+                    {"speaker": "Doctor", "start": 0.0, "end": 0.0, "text": "Bataiye, sar ka dard kahan hota hai? Subah zyada hota hai ya kisi aur waqt?", "text_en": "Tell me, where is the headache? Is it worse in the morning or at any other time?", "text_ur": "بتائیے، سر کا درد کہاں ہوتا ہے؟ صبح زیادہ ہوتا ہے یا کسی اور وقت؟"},
+                    {"speaker": "Patient", "start": 0.0, "end": 0.0, "text": "Zyadatar sar ke peechhe, subah ke waqt. Aur jab main turant khadi hoti hoon to halka chakkar aa jaata hai.", "text_en": "Mostly at the back of the head, in the morning. And when I stand up quickly I get a little dizzy.", "text_ur": "زیادہ تر سر کے پیچھے، صبح کے وقت۔ اور جب میں جلدی کھڑی ہوتی ہوں تو ہلکا سا چکر آ جاتا ہے۔"},
+                    {"speaker": "Doctor", "start": 0.0, "end": 0.0, "text": "Kya haathon ya pairon mein soojan aayi hai?", "text_en": "Have you noticed any swelling in your hands or feet?", "text_ur": "کیا آپ کے ہاتھوں یا پیروں میں سوجن آئی ہے؟"},
+                    {"speaker": "Patient", "start": 0.0, "end": 0.0, "text": "Anguthiyaan tight lagne lagi hain, aur raat ko baar baar peshaab ke liye uthna padta hai.", "text_en": "My rings have started to feel tight, and I have to get up to urinate again and again at night.", "text_ur": "انگوٹھیاں تنگ لگنے لگی ہیں، اور رات کو بار بار پیشاب کے لیے اٹھنا پڑتا ہے۔"},
+                    {"speaker": "Doctor", "start": 0.0, "end": 0.0, "text": "Aaj aapka blood pressure 158 bay 96 hai, aur peshaab ki jaanch mein protein mila hai. Main aapko halki dawa aur kam namak wali diet shuru kar rahi hoon. Do hafte mein wapas milte hain.", "text_en": "Your blood pressure today is 158 over 96, and protein was found in your urine test. I am starting you on a mild medicine and a low-salt diet. Let's meet again in two weeks.", "text_ur": "آج آپ کا بلڈ پریشر 158 بائے 96 ہے، اور پیشاب کے ٹیسٹ میں پروٹین ملا ہے۔ میں آپ کو ہلکی دوا اور کم نمک والی غذا شروع کر رہی ہوں۔ دو ہفتے میں پھر ملیں گے۔"},
                 ],
             }
             follow_up = {
@@ -197,9 +199,9 @@ async def seed() -> None:
                     "mahine baad labs dobara kar lete hain."
                 ),
                 "segments": [
-                    {"speaker": "Doctor", "start": 0.0, "end": 0.0, "text": "Dawa shuru karne ke baad aap kaise mehsoos kar rahi hain?"},
-                    {"speaker": "Patient", "start": 0.0, "end": 0.0, "text": "Bahut behtar hoon. Sar ka dard ab kaafi kam hai, bas shaam ko thodi thakan rehti hai."},
-                    {"speaker": "Doctor", "start": 0.0, "end": 0.0, "text": "Aapka blood pressure log achha hai — average 132 bay 84. Wahi dose jaari rakhein, aur teen mahine baad labs dobara kar lete hain."},
+                    {"speaker": "Doctor", "start": 0.0, "end": 0.0, "text": "Dawa shuru karne ke baad aap kaise mehsoos kar rahi hain?", "text_en": "How have you been feeling since you started the medicine?", "text_ur": "دوا شروع کرنے کے بعد آپ کیسا محسوس کر رہی ہیں؟"},
+                    {"speaker": "Patient", "start": 0.0, "end": 0.0, "text": "Bahut behtar hoon. Sar ka dard ab kaafi kam hai, bas shaam ko thodi thakan rehti hai.", "text_en": "Much better. The headache is much less now, I just feel a little tired in the evening.", "text_ur": "بہت بہتر ہوں۔ سر کا درد اب کافی کم ہے، بس شام کو تھوڑی تھکن رہتی ہے۔"},
+                    {"speaker": "Doctor", "start": 0.0, "end": 0.0, "text": "Aapka blood pressure log achha hai — average 132 bay 84. Wahi dose jaari rakhein, aur teen mahine baad labs dobara kar lete hain.", "text_en": "Your blood pressure log is good — averaging 132 over 84. Keep the same dose, and let's repeat the labs after three months.", "text_ur": "آپ کا بلڈ پریشر ریکارڈ اچھا ہے — اوسطاً 132 بائے 84۔ وہی خوراک جاری رکھیں، اور تین ماہ بعد ٹیسٹ دوبارہ کر لیتے ہیں۔"},
                 ],
             }
             extraction = {
@@ -258,6 +260,14 @@ async def seed() -> None:
                 ),
             ])
             print(f"Seeded 2 demo reports for {DEMO_PATIENT_EMAIL}")
+
+        # Idempotent refresh: ensure existing demo reports also carry the bilingual
+        # transcript (text_en/text_ur) even when they predate this feature.
+        for report in (await db.scalars(select(Report).where(Report.patient_id == patient.id))).all():
+            tx = copy.deepcopy(report.transcript_json or {})
+            if tx.get("segments"):
+                apply_glossary(tx)
+                report.transcript_json = tx
 
         await db.commit()
 

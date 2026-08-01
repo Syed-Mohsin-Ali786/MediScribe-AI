@@ -23,6 +23,7 @@ from app.services.medication_validation import validate_medications
 from app.services.pdf_export import generate_report_pdf
 from app.services.supabase_storage import upload_audio_placeholder
 from app.services.transcription import transcribe_audio
+from app.services.translation import translate_transcript
 
 router = APIRouter(tags=["reports"])
 
@@ -72,6 +73,7 @@ async def generate_report(
     file_bytes = await audio.read() if audio else b""
 
     transcript = await transcribe_audio(file_bytes, filename)
+    await translate_transcript(transcript)
     extraction = await extract_clinical(transcript)
     validation = await validate_medications(extraction.get("medications", []))
     audio_url = upload_audio_placeholder(file_bytes, filename)

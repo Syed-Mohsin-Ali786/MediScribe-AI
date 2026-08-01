@@ -3,16 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, Field
 
 from app.models.user import UserRole
-
-
-class DoctorRegister(BaseModel):
-    name: str
-    email: EmailStr
-    password: str
-    specialization: str
 
 
 class UserMe(BaseModel):
@@ -38,6 +31,14 @@ class DirectoryUserOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class DoctorProfileUpdate(BaseModel):
+    """Editable fields on the doctor's own profile. Omitted fields are left
+    unchanged; an empty specialization string clears it."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    specialization: str | None = Field(default=None, max_length=255)
 
 
 class PendingDoctorOut(BaseModel):

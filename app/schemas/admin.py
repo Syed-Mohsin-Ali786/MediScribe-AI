@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 
 from app.models.user import UserRole
 
@@ -33,6 +33,7 @@ class AdminUserOut(BaseModel):
     doctor_id: UUID | None = None
     doctor_name: str | None = None
     report_count: int = 0
+    dob: date | None = None
     created_at: datetime
 
 
@@ -80,3 +81,21 @@ class AdminAnalytics(BaseModel):
     reports_by_doctor: list[DoctorReportBreakdown]
     totals: AdminStats
     approval_rate: float
+
+
+class AdminDoctorCreate(BaseModel):
+    """Payload for admin-created doctors (no public self-registration)."""
+
+    name: str
+    email: EmailStr
+    password: str
+    specialization: str | None = None
+
+
+class AdminUserUpdate(BaseModel):
+    """Partial update for a doctor or patient managed by the admin."""
+
+    name: str | None = None
+    email: EmailStr | None = None
+    specialization: str | None = None
+    password: str | None = None

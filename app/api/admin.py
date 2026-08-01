@@ -9,13 +9,16 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.security import hash_password
 from app.dependencies.auth import require_role
 from app.models.report import Report, ReportStatus
 from app.models.user import User, UserRole
 from app.schemas.admin import (
     AdminAnalytics,
+    AdminDoctorCreate,
     AdminStats,
     AdminUserOut,
+    AdminUserUpdate,
     DailyReportPoint,
     DailyUserPoint,
     DoctorReportBreakdown,
@@ -86,6 +89,154 @@ async def reject_doctor(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="User is not a pending doctor",
         )
+
+    await db.delete(user)
+    await db.commit()
+
+
+@router.post(
+    "/doctors",
+    response_model=AdminUserOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a doctor directly (admin onboarding — no self-registration)",
+)
+async def create_doctor(
+    payload: AdminDoctorCreate,
+    _admin: Annotated[User, Depends(require_role(UserRole.ADMIN))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> AdminUserOut:
+    existing = await db.scalar(select(User).where(User.email == payload.email))
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email already registered",
+        )
+
+    doctor = User(
+        name=payload.name,
+        email=payload.email,
+        hashed_password=hash_password(payload.password),
+        specialization=payload.specialization,
+        role=UserRole.DOCTOR,
+        is_approved=True,
+    )
+    db.add(doctor)
+    await db.commit()
+    await db.refresh(doctor)
+    return AdminUserOut(
+        id=doctor.id,
+        name=doctor.name,
+        email=doctor.email,
+        role=doctor.role,
+        is_approved=doctor.is_approved,
+        specialization=doctor.specialization,
+        created_at=doctor.created_at,
+    )
+
+
+@router.patch(
+    "/users/{user_id}",
+    response_model=AdminUserOut,
+    summary="Edit a doctor (name, email, specialization, password)",
+)
+async def update_user(
+    user_id: UUID,
+    payload: AdminUserUpdate,
+    _admin: Annotated[User, Depends(require_role(UserRole.ADMIN))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> AdminUserOut:
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if user.role != UserRole.DOCTOR:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only doctors can be edited — patients are managed by their doctor",
+        )
+
+    if payload.email is not None and payload.email != user.email:
+        clash = await db.scalar(select(User).where(User.email == payload.email))
+        if clash:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Email already in use",
+            )
+        user.email = payload.email
+    if payload.name is not None:
+        user.name = payload.name
+    if payload.specialization is not None:
+        user.specialization = payload.specialization or None
+    if payload.password:
+        user.hashed_password = hash_password(payload.password)
+
+    await db.commit()
+    await db.refresh(user)
+
+    doctor_name: str | None = None
+    if user.doctor_id:
+        linked = await db.get(User, user.doctor_id)
+        doctor_name = linked.name if linked else None
+    report_count = (
+        await db.scalar(
+            select(func.count()).select_from(Report).where(Report.doctor_id == user.id)
+        )
+        or 0
+    )
+    return AdminUserOut(
+        id=user.id,
+        name=user.name,
+        email=user.email,
+        role=user.role,
+        is_approved=user.is_approved,
+        specialization=user.specialization,
+        doctor_id=user.doctor_id,
+        doctor_name=doctor_name,
+        report_count=int(report_count),
+        dob=user.dob,
+        created_at=user.created_at,
+    )
+
+
+@router.delete(
+    "/users/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a doctor or patient",
+)
+async def delete_user(
+    user_id: UUID,
+    _admin: Annotated[User, Depends(require_role(UserRole.ADMIN))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if user.role not in {UserRole.DOCTOR, UserRole.PATIENT}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only doctors and patients can be deleted",
+        )
+
+    if user.role == UserRole.DOCTOR:
+        linked_patients = (
+            await db.scalar(select(func.count()).select_from(User).where(User.doctor_id == user.id))
+            or 0
+        )
+        if linked_patients:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Doctor has linked patients — delete or reassign them first",
+            )
+        doctor_reports = (
+            await db.scalar(
+                select(func.count()).select_from(Report).where(Report.doctor_id == user.id)
+            )
+            or 0
+        )
+        if doctor_reports:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Doctor has reports — delete them first",
+            )
 
     await db.delete(user)
     await db.commit()
@@ -175,6 +326,7 @@ async def list_all_users(
             doctor_id=u.doctor_id,
             doctor_name=doctor_names.get(u.doctor_id),
             report_count=int(counts.get(u.id, 0) or 0),
+            dob=u.dob,
             created_at=u.created_at,
         )
         for u in users
