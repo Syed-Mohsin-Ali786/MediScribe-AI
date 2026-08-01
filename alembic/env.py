@@ -16,13 +16,15 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Inject DATABASE_URL from app settings, converting to the async psycopg driver.
+# Inject DATABASE_URL from app settings, converting to the async driver.
 settings = get_settings()
 database_url = str(settings.database_url)
 if database_url.startswith("postgresql+psycopg://"):
     database_url = database_url.replace("postgresql+psycopg://", "postgresql+psycopg_async://", 1)
 elif database_url.startswith("postgresql://"):
     database_url = database_url.replace("postgresql://", "postgresql+psycopg_async://", 1)
+elif database_url.startswith("sqlite://"):
+    database_url = database_url.replace("sqlite://", "sqlite+aiosqlite://", 1)
 config.set_main_option("sqlalchemy.url", database_url)
 
 target_metadata = Base.metadata

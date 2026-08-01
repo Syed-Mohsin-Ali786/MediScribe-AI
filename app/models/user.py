@@ -5,8 +5,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import Boolean, ForeignKey, String
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy import Boolean, ForeignKey, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDMixin
@@ -34,7 +33,7 @@ class User(Base, UUIDMixin, TimestampMixin):
 
     # Self-referential FK: patients are linked to their doctor.
     doctor_id: Mapped[UUID | None] = mapped_column(
-        PGUUID(as_uuid=True),
+        Uuid,
         ForeignKey("users.id"),
         nullable=True,
         index=True,

@@ -49,7 +49,7 @@ class Medication(BaseModel):
 
 class ConfidenceFlag(BaseModel):
     field: str = Field(description="The JSON field name that has ambiguity.")
-    reason: str = Field(description="Explanation of why the field is ambiguous or missing.")
+    note: str = Field(description="Explanation of why the field is ambiguous or missing.")
 
 
 class ClinicalExtraction(BaseModel):
@@ -58,8 +58,8 @@ class ClinicalExtraction(BaseModel):
     medical_history: list[str] = Field(
         default_factory=list, description="Medical history explicitly mentioned."
     )
-    diagnosis: str = Field(
-        description="Explicitly stated diagnosis. Empty string if not mentioned."
+    diagnosis: list[str] = Field(
+        description="Explicitly stated diagnosis as a list. Empty list if not mentioned."
     )
     medications: list[Medication] = Field(default_factory=list)
     recommendations: list[str] = Field(default_factory=list)
@@ -99,7 +99,7 @@ def _demo_extraction() -> dict[str, Any]:
     return {
         "symptoms": ["sore throat", "fever", "headache", "body aches"],
         "medical_history": [],
-        "diagnosis": "Acute pharyngitis, likely viral",
+        "diagnosis": ["Acute pharyngitis, likely viral"],
         "medications": [
             {
                 "name": "acetaminophen",
@@ -121,6 +121,6 @@ def _demo_extraction() -> dict[str, Any]:
         "highlights": ["Fever present", "No respiratory symptoms"],
         "follow_up_points": ["Return if fever persists beyond 3 days"],
         "confidence_flags": [
-            {"field": "objective", "reason": "No physical exam details captured in audio."}
+            {"field": "objective", "note": "No physical exam details captured in audio."}
         ],
     }

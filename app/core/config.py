@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import PostgresDsn
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,8 +15,8 @@ class Settings(BaseSettings):
     app_name: str = "MediScribe AI"
     debug: bool = False
 
-    # Database
-    database_url: PostgresDsn
+    # Database (PostgreSQL via Supabase in prod; SQLite allowed for offline demo)
+    database_url: str
 
     # JWT
     jwt_secret: str

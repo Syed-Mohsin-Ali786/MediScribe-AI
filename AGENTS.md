@@ -51,7 +51,9 @@
 | RLS policies (Supabase) | 🔲 Not started |
 | Deployment & demo prep | 🔲 Not started |
 
-**Last updated:** 31 Jul 2026 (session 2)
+**Last updated:** 1 Aug 2026 (admin console upgraded to a full **live platform dashboard**: real-time stats via `GET /admin/stats`, user directory via `GET /admin/users`, live integration health via `GET /admin/integrations`, and **analytics via `GET /admin/analytics`** — 14-day report generation/approval line chart, cumulative doctor/patient growth line chart, per-doctor report bar chart, approval rate. Frontend `/admin/analytics` route uses **Recharts** (installed), styled to the editorial theme; `/admin` polls stats/users/integrations every 20s. Fixed Next.js `scroll-behavior: smooth` hydration warning with `data-scroll-behavior="smooth"` on `<html>` in `app/layout.tsx`. **Note:** hydration mismatch errors in the dev console are from the Yandex/browser extension injecting `cz-shortcut-listen`/`data-yd-metadata` attributes — not app bugs.)
+
+**Pending from earlier session:** seed demo transcripts are already converted to **Romanized Urdu (Hindustani)** with per-speaker Hindi TTS (`app/seed.py`) but the live DB still holds the old English demo reports — delete old Ananya reports from Supabase + `media/demo_ananya_*.mp3`, re-run `python -m app.seed` to regenerate Urdu 2-speaker audio with real timestamps. Mistral `language` param removed for auto-detect.
 
 ---
 
@@ -77,13 +79,20 @@
 | POST | `/auth/login` | Public | ✅ |
 | GET | `/admin/pending-doctors` | Admin | ✅ |
 | PATCH | `/admin/users/{user_id}/promote-to-doctor` | Admin | ✅ |
+| DELETE | `/admin/users/{user_id}/reject` | Admin | ✅ |
+| GET | `/admin/stats` | Admin | ✅ |
+| GET | `/admin/users` | Admin | ✅ |
+| GET | `/admin/integrations` | Admin | ✅ |
+| GET | `/admin/analytics` | Admin | ✅ |
 | POST | `/doctor/patients` | Doctor | ✅ |
 | GET | `/doctor/patients` | Doctor | ✅ |
+| GET | `/doctor/patients/search` | Doctor | ✅ |
 | POST | `/generate-report` | Doctor | ✅ |
 | GET | `/records/{id}` | Doctor, Patient (own) | ✅ |
 | PATCH | `/records/{id}` | Doctor | ✅ |
 | POST | `/records/{id}/approve` | Doctor | ✅ |
 | GET | `/patient/reports` | Patient | ✅ |
+| GET | `/patient/doctors` | Patient | ✅ |
 | GET | `/records/{id}/pdf` | Doctor, Patient (own) | ✅ |
 
 All routes are mounted under prefix **`/api/v1`** in `app/main.py`. Note: FastAPI 0.141 registers included routers lazily — routes appear in `/openapi.json` and at runtime but are wrapped as `_IncludedRouter` in `app.routes`.
@@ -99,7 +108,7 @@ Ordered by the hackathon timeline (30 Jul – 1 Aug 2026). Work top to bottom.
 1. ✅ **Scaffold backend**: FastAPI app layout, `pyproject.toml`/`requirements.txt` (pin versions from §1), config + env loading, Supabase Postgres connection via SQLAlchemy + psycopg.
 2. ✅ **Models + migrations**: `users` and `reports` tables per SRS §5 (UUID PKs, enums, JSONB columns, self-referential `doctor_id`). Alembic migration `0001` written; run `alembic upgrade head` once a DB URL is live.
 3. ✅ **Auth layer**: register/login, JWT `role` claim decoding, `require_role(...)` dependencies; admin approve/reject flow.
-4. ✅ **Patient management**: doctor creates/invites patients, lists own patients. Invite email stubbed/manual for demo (doctor receives a temporary password to share offline).
+4. ✅ **Patient management**: doctor creates/invites patients, lists own patients. Doctor sets the patient's login password at invite time (`POST /doctor/patients` requires `password`). Invite email stubbed/manual for demo.
 5. ✅ **AI pipeline**: `/generate-report` — Mistral transcription (diarized) → Gemini structured extraction → RxNorm validation (with local JSON fallback) → persist `status = draft_generated`. Offline demo transcripts/extractions kick in when API keys are absent.
 6. ✅ **Review workflow**: fetch draft, PATCH edits, POST approve (`status = approved`, set `approved_at`).
 7. ✅ **Patient access**: `GET /patient/reports` (approved only).
@@ -108,12 +117,13 @@ Ordered by the hackathon timeline (30 Jul – 1 Aug 2026). Work top to bottom.
 10. 🔲 **Deploy + demo**: cloud hosting (Render/Railway/Fly.io), env-based secrets, scripted demo audio.
 
 ### Blockers / notes
-- ✅ Verified: `/openapi.json` lists all 12 `/api/v1` routes (FastAPI 0.141 lazy router registration confirmed working). All 10 tests pass, ruff clean.
+- ✅ Verified: `/openapi.json` lists all 14 `/api/v1` routes, including doctor patient search and patient doctor directory. Seven tests pass locally; three database-dependent tests skip without `TEST_DATABASE_URL`. Ruff clean.
 - ✅ **Friendly error responses**: `app/core/errors.py` — request-ID middleware + global handlers return clean JSON (`status_code`, `detail`, `error_code`, `request_id`) instead of raw 500s. `SQLAlchemyError` → 503 "service temporarily busy", validation → 422 with `errors` detail, anything else → 500 "Something went wrong". Full traceback logged server-side via `mediscribe.errors` logger. Registered in `app/main.py`.
 - ✅ **DB connected**: Supabase pooler (`aws-0-ap-southeast-1.pooler.supabase.com:6543`) works; direct host (`db.*.supabase.co`) does not resolve from dev machine. Alembic migration `0001` applied.
 - ✅ **Integration tests pass**: set `TEST_DATABASE_URL` to the async pooler URL (`postgresql+psycopg_async://postgres.<ref>:<pass>@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres`).
 - ✅ **Bugs fixed (session 2)**: `user.role.value` crash on login (role is plain str from DB); `created_at: str` → `datetime` in schemas; Mistral/Gemini API errors now gracefully fall back to demo data; `conftest.py` added for Windows SelectorEventLoop.
 - `.env` exists locally — do not commit.
+- `requirements.txt` uses the official `fastapi[standard]` extra; `requirements-dev.txt` adds pytest, pytest-asyncio, ruff, and mypy for local backend development.
 
 ### Non-functional must-haves
 - Reject unauthorized requests at FastAPI layer before any DB query (NFR-2).
@@ -166,7 +176,8 @@ uvicorn app.main:app --reload   # docs at http://localhost:8000/docs
 - **Decisions made** (recorded for the next agent):
   - **PDF → ReportLab** (not WeasyPrint): WeasyPrint needs GTK/Pango system libs missing on the Windows dev box; ReportLab is pure Python.
   - **`psycopg[binary]`** in deps: pure-python psycopg has no libpq on Windows; the binary extra bundles it.
-  - **Patient accounts get a temporary password** (auto-generated unless the doctor supplies one) returned in `POST /doctor/patients` — this satisfies FR-2.2/2.3 for the demo instead of a real email invite.
+  - **Doctor sets the patient's login password** (required `password` field on `POST /doctor/patients`) — no auto-generated/temporary password. Satisfies FR-2.2/2.3 for the demo instead of a real email invite. **UI wording uses "add/create patient" (not "invite")** — there is no email invite; a created patient appears in the doctor's patient list immediately (`setPatients(await api.myPatients())` after create).
+  - **SQLite offline fallback**: `Settings.database_url` is now a plain `str` (was `PostgresDsn`); models use `Uuid` + `JSONBCompat` (JSONB on Postgres, JSON on SQLite) so `DATABASE_URL=sqlite:///./mediscribe_demo.db` runs the whole backend with zero external services. `aiosqlite` added to deps. Run `python -m app.seed` to create tables + demo accounts. Point `DATABASE_URL` at Supabase for prod — no code change needed.
   - **Password hashing → Argon2** (`argon2-cffi`), not bcrypt/passlib: bcrypt caps passwords at 72 bytes and passlib's bcrypt backend is broken with current `bcrypt` releases. Hashes start with `$argon2id$`. Any bcrypt-hashed rows from before this switch will no longer verify.
   - **FastAPI 0.141 lazy router registration**: included routers appear as `_IncludedRouter` in `app.routes`; endpoints are live in OpenAPI/runtime, so verify with `/openapi.json`.
   - **String enums** (`String(50)`) for `users.role` and `reports.status` instead of Postgres `ENUM` types — avoids ALTER-type migration friction.

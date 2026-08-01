@@ -15,6 +15,8 @@ FastAPI · SQLAlchemy 2.0 (async) · Alembic · PostgreSQL (Supabase) · psycopg
 python -m venv .venv
 .\.venv\Scripts\activate        # Windows
 pip install -r requirements.txt
+# For local development and tests instead:
+pip install -r requirements-dev.txt
 
 Copy-Item .env.example .env     # then fill in real values
 alembic upgrade head            # create tables

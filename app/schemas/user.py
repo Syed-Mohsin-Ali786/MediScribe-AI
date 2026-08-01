@@ -26,6 +26,20 @@ class UserMe(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class DirectoryUserOut(BaseModel):
+    """Safe user fields returned by doctor/patient directory endpoints."""
+
+    id: UUID
+    name: str
+    email: str
+    role: UserRole
+    is_approved: bool
+    specialization: str | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class PendingDoctorOut(BaseModel):
     id: UUID
     name: str

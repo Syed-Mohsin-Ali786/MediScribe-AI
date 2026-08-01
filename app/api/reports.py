@@ -4,6 +4,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -12,10 +13,11 @@ from app.models.report import Report, ReportStatus
 from app.models.user import User, UserRole
 from app.schemas.report import (
     ApprovedReportListItem,
-    ReportApprovalResponse,
+    DoctorReportListItem,
     ReportOut,
     ReportUpdate,
 )
+from app.schemas.user import DirectoryUserOut
 from app.services.extraction import extract_clinical
 from app.services.medication_validation import validate_medications
 from app.services.pdf_export import generate_report_pdf
@@ -58,20 +60,21 @@ async def _fetch_report(
 )
 async def generate_report(
     patient_id: Annotated[UUID, Form()],
-    audio: Annotated[UploadFile, File()],
     doctor: Annotated[User, Depends(require_approved_doctor)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    audio: Annotated[UploadFile | None, File()] = None,
 ) -> Report:
     patient = await db.get(User, patient_id)
     if patient is None or patient.role != UserRole.PATIENT or patient.doctor_id != doctor.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found")
 
-    file_bytes = await audio.read()
+    filename = audio.filename or "consultation.webm" if audio else "consultation.webm"
+    file_bytes = await audio.read() if audio else b""
 
-    transcript = await transcribe_audio(file_bytes, audio.filename or "consultation.webm")
+    transcript = await transcribe_audio(file_bytes, filename)
     extraction = await extract_clinical(transcript)
     validation = await validate_medications(extraction.get("medications", []))
-    audio_url = upload_audio_placeholder(file_bytes, audio.filename or "consultation.webm")
+    audio_url = upload_audio_placeholder(file_bytes, filename)
 
     report = Report(
         patient_id=patient.id,
@@ -129,23 +132,64 @@ async def update_report(
 
 @router.post(
     "/records/{report_id}/approve",
-    response_model=ReportApprovalResponse,
+    response_model=ReportOut,
     summary="Approve and finalize a draft report",
 )
 async def approve_report(
     report_id: UUID,
     doctor: Annotated[User, Depends(require_approved_doctor)],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> ReportApprovalResponse:
+) -> Report:
     report = await _fetch_report(report_id, doctor, db)
     report.approve()
     await db.commit()
     await db.refresh(report)
-    return ReportApprovalResponse(
-        id=report.id,
-        status=report.status,
-        approved_at=report.approved_at,
+    return report
+
+
+@router.get(
+    "/doctor/reports",
+    response_model=list[DoctorReportListItem],
+    summary="List reports for the current doctor",
+)
+async def list_doctor_reports(
+    doctor: Annotated[User, Depends(require_approved_doctor)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[Report]:
+    result = await db.scalars(
+        select(Report)
+        .where(Report.doctor_id == doctor.id)
+        .order_by(Report.created_at.desc())
     )
+    reports_list = list(result.all())
+
+    patient_ids = {r.patient_id for r in reports_list}
+    patients: dict[UUID, User] = {}
+    if patient_ids:
+        patient_results = await db.scalars(
+            select(User).where(User.id.in_(patient_ids))
+        )
+        for p in patient_results.fetchall():
+            patients[p.id] = p
+
+    doctor_report_list: list[DoctorReportListItem] = []
+    for r in reports_list:
+        p = patients.get(r.patient_id)
+        doctor_report_list.append(
+            DoctorReportListItem(
+                id=r.id,
+                patient_id=r.patient_id,
+                patient_name=p.name if p else "Unknown",
+                patient_email=p.email if p else "",
+                audio_url=r.audio_url,
+                extraction_json=r.extraction_json,
+                validation_flags=r.validation_flags,
+                status=r.status,
+                created_at=r.created_at,
+                approved_at=r.approved_at,
+            )
+        )
+    return doctor_report_list
 
 
 @router.get(
@@ -186,11 +230,27 @@ async def list_patient_reports(
     patient: Annotated[User, Depends(require_role(UserRole.PATIENT))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> list[Report]:
-    from sqlalchemy import select
-
     result = await db.scalars(
         select(Report)
         .where(Report.patient_id == patient.id, Report.status == ReportStatus.APPROVED)
         .order_by(Report.approved_at)
     )
     return list(result.all())
+
+
+@router.get(
+    "/patient/doctors",
+    response_model=list[DirectoryUserOut],
+    summary="List the doctor linked to the current patient",
+)
+async def list_patient_doctors(
+    patient: Annotated[User, Depends(require_role(UserRole.PATIENT))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[User]:
+    if patient.doctor_id is None:
+        return []
+
+    doctor = await db.get(User, patient.doctor_id)
+    if doctor is None or doctor.role != UserRole.DOCTOR:
+        return []
+    return [doctor]

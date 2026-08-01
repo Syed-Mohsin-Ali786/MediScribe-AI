@@ -57,54 +57,37 @@ async def _rxnorm_lookup(name: str) -> dict | None:
     return None
 
 
-async def validate_medications(medications: list[dict]) -> dict:
-    """Validate a list of medication dicts against RxNorm, falling back to local JSON.
+async def validate_medications(medications: list[dict]) -> list[dict]:
+    """Validate medications against RxNorm, returning a flat flag list.
 
-    Returns a validation result dict with per-medication flags.
+    Returns a list of dicts with keys: medication, status, note — compatible
+    with the frontend's Record<string, string>[] validation_flags type.
     """
     fallback = _load_fallback()
-    results = []
-    all_valid = True
+    results: list[dict] = []
 
     for med in medications:
         name = med.get("name", "")
         if not name:
-            results.append({"medication": med, "validated": False, "reason": "missing name"})
-            all_valid = False
+            results.append({"medication": str(med), "status": "unrecognized", "note": "Missing medication name"})
             continue
 
         rx_result = await _rxnorm_lookup(name)
         if rx_result:
-            results.append({"medication": med, **rx_result})
+            results.append({"medication": name, "status": "valid", "note": f"RxNorm: {rx_result.get('rxnorm_match', '')}"})
             continue
 
-        # Fallback lookup
         normalized = _normalize_name(name)
         if normalized in fallback:
             results.append({
-                "medication": med,
-                "name": name,
-                "normalized": normalized,
-                "validated": fallback[normalized].get("validated", True),
-                "source": "fallback",
-                "fallback_data": fallback[normalized],
+                "medication": name,
+                "status": "valid" if fallback[normalized].get("validated", True) else "warning",
+                "note": fallback[normalized].get("notes", "Local fallback match"),
             })
         else:
-            results.append({
-                "medication": med,
-                "name": name,
-                "normalized": normalized,
-                "validated": False,
-                "source": "none",
-                "reason": "Not found in RxNorm or local fallback",
-            })
-            all_valid = False
+            results.append({"medication": name, "status": "unrecognized", "note": "Not found in RxNorm or local fallback"})
 
-    return {
-        "all_valid": all_valid,
-        "medications": results,
-        "source": "rxnorm_or_fallback",
-    }
+    return results
 
 
 def seed_fallback_entry(name: str, validated: bool = True, notes: str = "") -> None:

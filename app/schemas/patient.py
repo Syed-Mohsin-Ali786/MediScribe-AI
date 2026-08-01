@@ -5,18 +5,22 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr
 
+from app.models.user import UserRole
+
 
 class PatientCreate(BaseModel):
     name: str
     email: EmailStr
     dob: date | None = None
-    temporary_password: str | None = None
+    password: str
 
 
 class PatientOut(BaseModel):
     id: UUID
     name: str
     email: str
+    role: UserRole
+    is_approved: bool
     dob: date | None = None
     doctor_id: UUID
     created_at: datetime
@@ -28,5 +32,9 @@ class PatientInviteResponse(BaseModel):
     id: UUID
     name: str
     email: str
-    temporary_password: str | None = None
-    message: str = "Patient account created. Share the temporary password offline for demo."
+    role: UserRole
+    is_approved: bool
+    dob: date | None = None
+    doctor_id: UUID
+    created_at: datetime
+    message: str = "Patient account created. Share the password with the patient."

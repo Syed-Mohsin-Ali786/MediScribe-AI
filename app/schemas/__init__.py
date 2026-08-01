@@ -2,7 +2,7 @@ from app.schemas.auth import LoginRequest, LoginResponse
 from app.schemas.patient import PatientCreate, PatientInviteResponse, PatientOut
 from app.schemas.report import (
     ApprovedReportListItem,
-    ReportApprovalResponse,
+    DoctorReportListItem,
     ReportOut,
     ReportUpdate,
 )
@@ -19,6 +19,6 @@ __all__ = [
     "PatientOut",
     "ReportOut",
     "ReportUpdate",
-    "ReportApprovalResponse",
+    "DoctorReportListItem",
     "ApprovedReportListItem",
 ]
