@@ -15,6 +15,9 @@ class UserMe(BaseModel):
     role: UserRole
     is_approved: bool
     specialization: str | None = None
+    avatar_url: str | None = None
+    permission_requested: bool = False
+    permission_requested_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
@@ -39,6 +42,7 @@ class DoctorProfileUpdate(BaseModel):
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
     specialization: str | None = Field(default=None, max_length=255)
+    avatar_url: str | None = Field(default=None, max_length=500)
 
 
 class PendingDoctorOut(BaseModel):
@@ -46,8 +50,10 @@ class PendingDoctorOut(BaseModel):
     name: str
     email: str
     specialization: str | None = None
+    avatar_url: str | None = None
     role: UserRole
     is_approved: bool
+    permission_requested: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}

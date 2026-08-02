@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +25,7 @@ from app.schemas.admin import (
     IntegrationsStatus,
 )
 from app.schemas.user import PendingDoctorOut
+from app.services.avatar import save_avatar
 from app.services.integrations import check_integrations
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -33,14 +34,19 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 @router.get(
     "/pending-doctors",
     response_model=list[PendingDoctorOut],
-    summary="List doctors awaiting admin approval",
+    summary="List doctors awaiting admin approval (who requested permission)",
 )
 async def list_pending_doctors(
     _admin: Annotated[User, Depends(require_role(UserRole.ADMIN))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> list[User]:
     result = await db.scalars(
-        select(User).where(User.role == UserRole.PENDING_DOCTOR).order_by(User.created_at)
+        select(User)
+        .where(
+            User.role == UserRole.PENDING_DOCTOR,
+            User.permission_requested.is_(True),
+        )
+        .order_by(User.created_at)
     )
     return list(result.all())
 
@@ -95,6 +101,47 @@ async def reject_doctor(
 
 
 @router.post(
+    "/users/{user_id}/avatar",
+    response_model=AdminUserOut,
+    summary="Upload a profile photo for a doctor (admin-managed)",
+)
+async def upload_user_avatar(
+    user_id: UUID,
+    file: Annotated[UploadFile, "Profile photo (jpg/png/webp/gif, max 5 MB)"],
+    _admin: Annotated[User, Depends(require_role(UserRole.ADMIN))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> AdminUserOut:
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if user.role not in {UserRole.DOCTOR, UserRole.PENDING_DOCTOR}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only doctors can have a profile photo",
+        )
+    try:
+        user.avatar_url = save_avatar(file, str(user.id))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    await db.commit()
+    await db.refresh(user)
+    return AdminUserOut(
+        id=user.id,
+        name=user.name,
+        email=user.email,
+        role=user.role,
+        is_approved=user.is_approved,
+        specialization=user.specialization,
+        avatar_url=user.avatar_url,
+        permission_requested=user.permission_requested,
+        doctor_id=user.doctor_id,
+        report_count=0,
+        dob=user.dob,
+        created_at=user.created_at,
+    )
+
+
+@router.post(
     "/doctors",
     response_model=AdminUserOut,
     status_code=status.HTTP_201_CREATED,
@@ -130,6 +177,8 @@ async def create_doctor(
         role=doctor.role,
         is_approved=doctor.is_approved,
         specialization=doctor.specialization,
+        avatar_url=doctor.avatar_url,
+        permission_requested=doctor.permission_requested,
         created_at=doctor.created_at,
     )
 
@@ -189,6 +238,8 @@ async def update_user(
         role=user.role,
         is_approved=user.is_approved,
         specialization=user.specialization,
+        avatar_url=user.avatar_url,
+        permission_requested=user.permission_requested,
         doctor_id=user.doctor_id,
         doctor_name=doctor_name,
         report_count=int(report_count),
@@ -323,6 +374,8 @@ async def list_all_users(
             role=u.role,
             is_approved=u.is_approved,
             specialization=u.specialization,
+            avatar_url=u.avatar_url,
+            permission_requested=u.permission_requested,
             doctor_id=u.doctor_id,
             doctor_name=doctor_names.get(u.doctor_id),
             report_count=int(counts.get(u.id, 0) or 0),

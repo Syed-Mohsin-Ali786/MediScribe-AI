@@ -30,6 +30,8 @@ class AdminUserOut(BaseModel):
     role: UserRole
     is_approved: bool
     specialization: str | None = None
+    avatar_url: str | None = None
+    permission_requested: bool = False
     doctor_id: UUID | None = None
     doctor_name: str | None = None
     report_count: int = 0

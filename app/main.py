@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.api import api_router
-from app.core.config import get_settings
+from app.core.config import UPLOADS_DIR, get_settings
 from app.core.errors import (
     db_error_handler,
     request_id_middleware,
@@ -42,6 +42,10 @@ app.include_router(api_router, prefix="/api/v1")
 # Serve consultation audio files persisted under media/.
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
+
+# Serve uploaded profile photos persisted under uploads/.
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 
 
 @app.get("/health", tags=["health"])

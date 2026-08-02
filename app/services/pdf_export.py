@@ -204,56 +204,122 @@ def _build_cover_story(
         ("P", "Plan", soap.get("plan", "N/A")),
     ]
 
+    # Optional supporting data merged into each box when present
+    supporting = {
+        "S": "symptoms",
+        "O": "medical_history",
+        "A": "diagnosis",
+        "P": "recommendations",
+    }
+
     for letter, title, body in soap_sections:
-        left = avail * 0.08
-        right = avail - left - 6
+        extra_items = [str(x) for x in (extraction.get(supporting[letter]) or [])]
+        # Cap supporting bullets so the box never overflows the cover page
+        if len(extra_items) > 6:
+            extra_items = extra_items[:6] + ["… (more on next page)"]
+        body_lines = [line.strip() for line in body.splitlines() if line.strip()] if body != "N/A" else []
+        # Cap the body so a single box never overflows the page
+        if len(body_lines) > 8:
+            body_lines = body_lines[:8] + ["… (full note continues on next page)"]
+
+        inner: list[Flowable] = []
+        inner.append(
+            Paragraph(
+                f'<font fontName="Helvetica-Bold" color="{DEEP_NAVY}" size="9.5">{title}</font>',
+                ParagraphStyle(f"SoapTitle{letter}", fontSize=9.5, leading=12),
+            )
+        )
+        inner.append(Spacer(1, 3))
+        if body_lines:
+            inner.append(
+                Paragraph(
+                    f'<font color="{SLATE}" size="9">{body}</font>',
+                    ParagraphStyle(f"SoapBody{letter}", fontSize=9, leading=13),
+                )
+            )
+        for item in extra_items:
+            inner.append(Spacer(1, 2))
+            inner.append(
+                Paragraph(
+                    f'<font color="{TEAL}" size="8.5">•</font>  '
+                    f'<font color="{SLATE}" size="8.5">{item}</font>',
+                    ParagraphStyle(f"SoapExtra{letter}", fontSize=8.5, leading=12),
+                )
+            )
+
+        # Boxed card: colour chip + content, with a full border and left accent bar
         data = [
             [
                 Paragraph(
-                    f'<font fontName="Helvetica-Bold" color="{TEAL}" size="18">{letter}</font>',
-                    ParagraphStyle("SoapL", fontSize=18, leading=20),
+                    f'<font fontName="Helvetica-Bold" color="white" size="13">{letter}</font>',
+                    ParagraphStyle(f"SoapChip{letter}", fontSize=13, leading=16, alignment=TA_CENTER),
                 ),
-                Paragraph(
-                    f'<font fontName="Helvetica-Bold" size="10">{title}</font><br/>'
-                    f'<font color="{SLATE}" size="9">{body}</font>',
-                    ParagraphStyle("SoapR", fontSize=9, leading=13),
-                ),
+                inner,
             ]
         ]
-        t = Table(data, colWidths=[left, right], hAlign="LEFT")
+        chip_w = avail * 0.07
+        t = Table(data, colWidths=[chip_w, avail - chip_w], hAlign="LEFT")
         t.setStyle(
             TableStyle(
                 [
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("TOPPADDING", (0, 0), (-1, -1), 6),
+                    ("VALIGN", (0, 0), (0, 0), "MIDDLE"),
+                    ("VALIGN", (1, 0), (1, 0), "TOP"),
+                    ("BACKGROUND", (0, 0), (0, 0), TEAL),
+                    ("BACKGROUND", (1, 0), (1, 0), colors.HexColor("#f8fafc")),
+                    ("BOX", (0, 0), (-1, -1), 0.6, BORDER),
+                    ("INNERGRID", (0, 0), (0, 0), 0.6, BORDER),
+                    ("TOPPADDING", (0, 0), (-1, -1), 8),
                     ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
                     ("LEFTPADDING", (0, 0), (0, 0), 0),
-                    ("LEFTPADDING", (1, 0), (1, 0), 6),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-                    ("LINEBELOW", (0, 0), (-1, -1), 0.4, BORDER),
+                    ("RIGHTPADDING", (0, 0), (0, 0), 0),
+                    ("LEFTPADDING", (1, 0), (1, 0), 10),
+                    ("RIGHTPADDING", (1, 0), (1, 0), 10),
                 ]
             )
         )
         story.append(t)
+        story.append(Spacer(1, 8))
 
-    story.append(Spacer(1, 18))
+    story.append(Spacer(1, 10))
 
-    # Diagnosis highlight
+    # ── Primary Diagnosis highlight box ──
     diagnoses = extraction.get("diagnosis") or []
     if diagnoses:
-        story.append(Paragraph("Primary Diagnosis", styles["section"]))
-        story.append(Spacer(1, 6))
-        for d in diagnoses:
-            story.append(
+        diag_data: list[list[Flowable]] = [
+            [
                 Paragraph(
-                    f'<font color="{TEAL}" size="9">●</font>  '
-                    f'<font color="{DEEP_NAVY}" size="10">{d}</font>',
-                    ParagraphStyle("DiagItem", parent=styles["body"], fontSize=10, leading=14),
+                    '<font fontName="Helvetica-Bold" color="white" size="9.5">PRIMARY DIAGNOSIS</font>',
+                    ParagraphStyle("DiagHdr", fontSize=9.5, leading=12, textColor=colors.white),
                 )
+            ]
+        ]
+        for d in diagnoses:
+            diag_data.append(
+                [
+                    Paragraph(
+                        f'<font color="{DEEP_NAVY}" size="10"><b>●</b> {d}</font>',
+                        ParagraphStyle(f"DiagItem{len(diag_data)}", fontSize=10, leading=14),
+                    )
+                ]
             )
-            story.append(Spacer(1, 2))
-
-    story.append(Spacer(1, 14))
+        diag_t = Table(diag_data, colWidths=[avail], hAlign="LEFT")
+        diag_t.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (0, 0), AMBER),
+                    ("BACKGROUND", (0, 1), (0, -1), colors.HexColor("#fef3c7")),
+                    ("BOX", (0, 0), (-1, -1), 0.8, AMBER),
+                    ("TOPPADDING", (0, 0), (0, 0), 7),
+                    ("BOTTOMPADDING", (0, 0), (0, 0), 7),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 12),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+                    ("TOPPADDING", (0, 1), (0, -1), 5),
+                    ("BOTTOMPADDING", (0, 1), (0, -1), 5),
+                ]
+            )
+        )
+        story.append(diag_t)
+        story.append(Spacer(1, 14))
     story.append(
         Paragraph(
             "This report was generated by AI, reviewed by the attending physician, "

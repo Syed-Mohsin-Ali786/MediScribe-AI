@@ -3,18 +3,19 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.security import hash_password
-from app.dependencies.auth import require_approved_doctor
+from app.dependencies.auth import require_approved_doctor, require_role
 from app.models.contact_message import ContactMessage
 from app.models.user import User, UserRole
 from app.schemas.message import ContactMessageOut
 from app.schemas.patient import PatientCreate, PatientInviteResponse, PatientOut
 from app.schemas.user import DoctorProfileUpdate, UserMe
+from app.services.avatar import save_avatar
 
 router = APIRouter(prefix="/doctor", tags=["doctor"])
 
@@ -119,6 +120,27 @@ async def update_profile(
         doctor.name = payload.name.strip()
     if payload.specialization is not None:
         doctor.specialization = payload.specialization.strip() or None
+    if payload.avatar_url is not None:
+        doctor.avatar_url = payload.avatar_url or None
+    await db.commit()
+    await db.refresh(doctor)
+    return doctor
+
+
+@router.post(
+    "/profile/avatar",
+    response_model=UserMe,
+    summary="Upload a profile photo for the current doctor",
+)
+async def upload_avatar(
+    file: Annotated[UploadFile, "Profile photo (jpg/png/webp/gif, max 5 MB)"],
+    doctor: Annotated[User, Depends(require_role(UserRole.DOCTOR))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> User:
+    try:
+        doctor.avatar_url = save_avatar(file, str(doctor.id))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     await db.commit()
     await db.refresh(doctor)
     return doctor
