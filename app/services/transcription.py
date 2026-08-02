@@ -153,7 +153,9 @@ async def transcribe_audio(file_bytes: bytes, filename: str, settings: Settings 
     """Transcribe audio with Mistral Voxtral ASR including speaker diarization.
 
     If no API key is configured, returns a demo transcript so the pipeline can be
-    exercised end-to-end without external credentials.
+    exercised end-to-end without external credentials. The spoken language is
+    auto-detected by Voxtral (note: Urdu is not a supported target language, so
+    Urdu speech is typically rendered as Hindi).
     """
     settings = settings or _settings
     if not settings.mistral_api_key or not file_bytes:

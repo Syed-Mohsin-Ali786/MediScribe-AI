@@ -410,14 +410,10 @@ def _build_detail_story(
     )
     story.append(Spacer(1, 16))
 
-    if recs:
-        story.append(Paragraph("Recommendations", styles["subsection"]))
-        story.append(Spacer(1, 4))
-        rec_rows: list[list[Flowable]] = []
-        for r in recs:
-            rec_rows.append([Paragraph(f'<font size="9">● {r}</font>', styles["small"])])
-        story.append(_styled_table(rec_rows, [avail * 0.96]))
-        story.append(Spacer(1, 16))
+    add_section("Symptoms", _bullet_list(extraction.get("symptoms"), body_style))
+    add_section("Medical History", _bullet_list(extraction.get("medical_history"), body_style))
+    add_section("Medications", _medication_lines(extraction.get("medications"), body_style))
+    add_section("Recommendations", _bullet_list(extraction.get("recommendations"), body_style))
 
     # Highlights + Follow-up
     highlights = extraction.get("highlights") or []
