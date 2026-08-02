@@ -12,12 +12,11 @@ async def test_validate_medications_uses_fallback_when_rxnorm_unavailable() -> N
     with patch("app.services.medication_validation._rxnorm_lookup", return_value=None):
         result = await validate_medications(meds)
 
-    assert result["source"] == "rxnorm_or_fallback"
-    entry = result["medications"][0]
-    assert entry["medication"]["name"] == "acetaminophen"
+    assert len(result) == 1
+    entry = result[0]
+    assert entry["medication"] == "acetaminophen"
     # acetaminophen is seeded in the fallback JSON.
-    assert entry["source"] == "fallback"
-    assert entry["validated"] is True
+    assert entry["status"] == "valid"
 
 
 @pytest.mark.asyncio
@@ -26,15 +25,16 @@ async def test_validate_medications_flags_unknown_drug() -> None:
     with patch("app.services.medication_validation._rxnorm_lookup", return_value=None):
         result = await validate_medications(meds)
 
-    assert result["all_valid"] is False
-    entry = result["medications"][0]
-    assert entry["source"] == "none"
-    assert entry["validated"] is False
+    assert len(result) == 1
+    entry = result[0]
+    assert entry["status"] == "unrecognized"
+    assert entry["medication"] == "totally-fake-drug-xyz"
 
 
 @pytest.mark.asyncio
 async def test_validate_medications_missing_name() -> None:
     result = await validate_medications([{"dosage": "10 mg"}])
-    assert result["all_valid"] is False
-    assert result["medications"][0]["reason"] == "missing name"
+    assert len(result) == 1
+    assert result[0]["status"] == "unrecognized"
+    assert "Missing medication name" in result[0]["note"]
 

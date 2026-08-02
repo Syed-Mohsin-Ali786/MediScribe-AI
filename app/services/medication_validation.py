@@ -66,7 +66,15 @@ def _is_vague_name(name: str) -> bool:
     return any(p in lower for p in _VAGUE_PATTERNS)
 
 
-async def validate_medications(medications: list[dict]) -> dict:
+_RXNORM_CONCURRENCY = asyncio.Semaphore(5)
+
+
+async def _lookup_with_semaphore(name: str) -> dict | None:
+    async with _RXNORM_CONCURRENCY:
+        return await _rxnorm_lookup(name)
+
+
+async def validate_medications(medications: list[dict]) -> list[dict]:
     """Validate a list of medication dicts against RxNorm, falling back to local JSON.
 
     Returns a list of dicts with keys: medication, status, note — compatible
@@ -101,10 +109,9 @@ async def validate_medications(medications: list[dict]) -> dict:
                 "source": "none",
                 "reason": "Medication name not explicitly stated in transcript — physician must fill in",
             })
-            all_valid = False
             continue
 
-        rx_result = await _rxnorm_lookup(name)
+        rx_result = by_name.get(name)
         if rx_result:
             results.append({"medication": name, "status": "valid", "note": f"RxNorm: {rx_result.get('rxnorm_match', '')}"})
             continue
