@@ -37,7 +37,7 @@ async def backfill_translations() -> int:
                 continue
 
             fresh = copy.deepcopy(tx)
-            await translate_transcript(fresh, inter_chunk_delay=0.4, force=True)
+            await translate_transcript(fresh, force=True)
             new_segments = fresh.get("segments") or []
             for seg in new_segments:
                 if seg.get("speaker") not in ("Doctor", "Patient"):

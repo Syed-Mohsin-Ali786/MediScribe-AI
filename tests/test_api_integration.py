@@ -127,7 +127,7 @@ async def test_full_workflow(client) -> None:
     assert report["extraction_json"]["diagnosis"]
     assert isinstance(report["validation_flags"], list)
 
-    # 5. Patient cannot see a draft report (403).
+    # 5. Patient cannot see a draft report (403) — reports are doctor-only now.
     patient_token = await _login(ac, "jamie@test.ai", "PatientPass!123")
     doctors = await ac.get("/api/v1/patient/doctors", headers=_auth(patient_token))
     assert doctors.status_code == 200, doctors.text
@@ -135,7 +135,7 @@ async def test_full_workflow(client) -> None:
     draft_fetch = await ac.get(f"/api/v1/records/{report['id']}", headers=_auth(patient_token))
     assert draft_fetch.status_code == 403
 
-    # 6. Doctor approves; patient can now see the report and export the PDF.
+    # 6. Doctor approves; patient can only see appointment history (date, time, doctor).
     approve = await ac.post(
         f"/api/v1/records/{report['id']}/approve", headers=_auth(doctor_token)
     )
@@ -150,14 +150,21 @@ async def test_full_workflow(client) -> None:
     assert len(doctor_reports.json()) >= 1
     assert any(r["id"] == report["id"] for r in doctor_reports.json())
 
-    patient_list = await ac.get("/api/v1/patient/reports", headers=_auth(patient_token))
+    patient_list = await ac.get("/api/v1/patient/history", headers=_auth(patient_token))
     assert patient_list.status_code == 200, patient_list.text
-    assert [r["id"] for r in patient_list.json()] == [report["id"]]
+    items = patient_list.json()
+    assert [r["id"] for r in items] == [report["id"]]
+    # Only metadata — no clinical content leaks to the patient.
+    assert "doctor_name" in items[0]
+    assert "appointment_at" in items[0]
+    assert "extraction_json" not in items[0]
+    assert "audio_url" not in items[0]
 
+    # Patient can no longer fetch the report body or export the PDF.
+    detail_fetch = await ac.get(f"/api/v1/records/{report['id']}", headers=_auth(patient_token))
+    assert detail_fetch.status_code == 403
     pdf = await ac.get(f"/api/v1/records/{report['id']}/pdf", headers=_auth(patient_token))
-    assert pdf.status_code == 200, pdf.text
-    assert pdf.headers["content-type"] == "application/pdf"
-    assert pdf.content.startswith(b"%PDF")
+    assert pdf.status_code == 403
 
 
 @pytest.mark.asyncio

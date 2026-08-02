@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Annotated
 from uuid import UUID
 
@@ -12,7 +13,7 @@ from app.dependencies.auth import require_approved_doctor, require_role
 from app.models.report import Report, ReportStatus
 from app.models.user import User, UserRole
 from app.schemas.report import (
-    ApprovedReportListItem,
+    AppointmentHistoryItem,
     DoctorReportListItem,
     ReportOut,
     ReportUpdate,
@@ -40,15 +41,10 @@ async def _fetch_report(
     if report is None:
         raise NOT_FOUND
 
-    if user.role == UserRole.DOCTOR:
-        if report.doctor_id != user.id:
-            raise FORBIDDEN
-    elif user.role == UserRole.PATIENT:
-        if report.patient_id != user.id:
-            raise FORBIDDEN
-        if report.status != ReportStatus.APPROVED:
-            raise FORBIDDEN
-    else:
+    # Patients no longer get report detail access — only appointment history.
+    if user.role != UserRole.DOCTOR:
+        raise FORBIDDEN
+    if report.doctor_id != user.id:
         raise FORBIDDEN
     return report
 
@@ -73,8 +69,13 @@ async def generate_report(
     file_bytes = await audio.read() if audio else b""
 
     transcript = await transcribe_audio(file_bytes, filename)
-    await translate_transcript(transcript)
-    extraction = await extract_clinical(transcript)
+    # Translation (mutates transcript segments) and extraction (reads only the
+    # transcript text) touch disjoint data — run them concurrently to cut the
+    # pipeline's critical path by the slower of the two.
+    translation, extraction = await asyncio.gather(
+        translate_transcript(transcript),
+        extract_clinical(transcript),
+    )
     validation = await validate_medications(extraction.get("medications", []))
     audio_url = upload_audio_placeholder(file_bytes, filename)
 
@@ -96,14 +97,14 @@ async def generate_report(
 @router.get(
     "/records/{report_id}",
     response_model=ReportOut,
-    summary="Fetch a report (doctor own, or patient own approved)",
+    summary="Fetch a report (doctor own only)",
 )
 async def get_report(
     report_id: UUID,
-    user: Annotated[User, Depends(require_role(UserRole.DOCTOR, UserRole.PATIENT))],
+    doctor: Annotated[User, Depends(require_approved_doctor)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> Report:
-    return await _fetch_report(report_id, user, db)
+    return await _fetch_report(report_id, doctor, db)
 
 
 @router.patch(
@@ -196,16 +197,16 @@ async def list_doctor_reports(
 
 @router.get(
     "/records/{report_id}/pdf",
-    summary="Export an approved report as PDF",
+    summary="Export an approved report as PDF (doctor only)",
     response_class=Response,
     responses={200: {"content": {"application/pdf": {}}}},
 )
 async def export_report_pdf(
     report_id: UUID,
-    user: Annotated[User, Depends(require_role(UserRole.DOCTOR, UserRole.PATIENT))],
+    doctor: Annotated[User, Depends(require_approved_doctor)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> Response:
-    report = await _fetch_report(report_id, user, db)
+    report = await _fetch_report(report_id, doctor, db)
     if report.status != ReportStatus.APPROVED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -213,7 +214,6 @@ async def export_report_pdf(
         )
 
     patient = await db.get(User, report.patient_id)
-    doctor = await db.get(User, report.doctor_id)
     pdf = generate_report_pdf(report, patient, doctor)
 
     return Response(
@@ -224,20 +224,42 @@ async def export_report_pdf(
 
 
 @router.get(
-    "/patient/reports",
-    response_model=list[ApprovedReportListItem],
-    summary="List own approved reports (patient only)",
+    "/patient/history",
+    response_model=list[AppointmentHistoryItem],
+    summary="List own appointment history (patient only) — date, time and doctor only",
 )
-async def list_patient_reports(
+async def list_patient_history(
     patient: Annotated[User, Depends(require_role(UserRole.PATIENT))],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> list[Report]:
+) -> list[AppointmentHistoryItem]:
     result = await db.scalars(
         select(Report)
         .where(Report.patient_id == patient.id, Report.status == ReportStatus.APPROVED)
-        .order_by(Report.approved_at)
+        .order_by(Report.approved_at.desc())
     )
-    return list(result.all())
+    reports = list(result.all())
+
+    doctor_ids = {r.doctor_id for r in reports}
+    doctors: dict[UUID, User] = {}
+    if doctor_ids:
+        doctor_results = await db.scalars(select(User).where(User.id.in_(doctor_ids)))
+        for d in doctor_results.fetchall():
+            doctors[d.id] = d
+
+    items: list[AppointmentHistoryItem] = []
+    for r in reports:
+        doc = doctors.get(r.doctor_id)
+        items.append(
+            AppointmentHistoryItem(
+                id=r.id,
+                doctor_id=r.doctor_id,
+                doctor_name=doc.name if doc else "Unknown",
+                specialization=doc.specialization if doc else None,
+                appointment_at=r.approved_at or r.created_at,
+                status=r.status,
+            )
+        )
+    return items
 
 
 @router.get(

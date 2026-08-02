@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -70,9 +71,20 @@ async def validate_medications(medications: list[dict]) -> dict:
 
     Returns a list of dicts with keys: medication, status, note — compatible
     with the frontend's Record<string, string>[] validation_flags type.
+    All RxNorm lookups run concurrently so N medications cost ~one lookup
+    instead of N sequential round-trips.
     """
     fallback = _load_fallback()
     results: list[dict] = []
+
+    names = [med.get("name", "") for med in medications]
+    lookups = await asyncio.gather(*(_lookup_with_semaphore(name) for name in names if name))
+
+    by_name: dict[str, dict | None] = {}
+    it = iter(lookups)
+    for name in names:
+        if name:
+            by_name[name] = next(it)
 
     for med in medications:
         name = med.get("name", "")

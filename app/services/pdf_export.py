@@ -14,8 +14,7 @@ from reportlab.platypus import (
     BaseDocTemplate,
     Frame,
     HRFlowable,
-    NextPageTemplate,
-    PageBreak,
+    KeepTogether,
     PageTemplate,
     Paragraph,
     Spacer,
@@ -38,8 +37,7 @@ AMBER = colors.HexColor("#d97706")
 ROSE = colors.HexColor("#e11d48")
 GREEN = colors.HexColor("#16a34a")
 
-COVER_MARGIN = 0.6 * inch
-BODY_MARGIN = 0.7 * inch
+MARGIN = 0.7 * inch
 
 
 class _StripeBar(Flowable):
@@ -82,7 +80,98 @@ def _label_cell(text: str, style: ParagraphStyle) -> Paragraph:
     return Paragraph(f"<b>{text}</b>", style)
 
 
-def _build_cover_story(
+def _norm_list(value: Any) -> list[str]:
+    """Normalize a list field that may be a single string, a list, or None."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    return [str(x) for x in value]
+
+
+def _details_table(patient: User, doctor: User, report: Report, styles: dict[str, ParagraphStyle], avail: float) -> Table:
+    """A clean label → value table (Name / Email / DOB / …) for patient, doctor and report metadata."""
+
+    approved_at = (report.approved_at or datetime.now(UTC)).strftime("%d %B %Y, %H:%M UTC")
+    report_date = (report.created_at or datetime.now(UTC)).strftime("%d %B %Y")
+    report_id = str(report.id)
+    dob = patient.dob.strftime("%d %B %Y") if patient.dob else "—"
+
+    def row(label: str, value: str) -> list[Flowable]:
+        return [
+            _label_cell(label, styles["label"]),
+            Paragraph(value, styles["body"]),
+        ]
+
+    # Two side-by-side boxes: patient info | doctor info. Each box has 2 columns
+    # (label | value), with the section header spanning both.
+    def box_rows(header: str, pairs: list[tuple[str, str]]) -> list[list[Flowable]]:
+        rows: list[list[Flowable]] = [[_label_cell(header, styles["section"])]]
+        for label, value in pairs:
+            rows.append(row(label, value))
+        return rows
+
+    left_rows = box_rows(
+        "PATIENT",
+        [("Name", patient.name), ("Email", patient.email), ("DOB", dob)],
+    )
+    right_rows = box_rows(
+        "ATTENDING PHYSICIAN",
+        [
+            ("Name", doctor.name),
+            ("Email", doctor.email),
+            ("Specialization", doctor.specialization or "General Practice"),
+        ],
+    )
+
+    def boxed(rows: list[list[Flowable]], width: float) -> Table:
+        t = Table(rows, colWidths=[width * 0.32, width * 0.68], hAlign="LEFT")
+        t.setStyle(
+            TableStyle(
+                [
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                    ("TOPPADDING", (0, 0), (-1, -1), 2),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                    ("SPAN", (0, 0), (1, 0)),
+                    ("BOX", (0, 0), (-1, -1), 0.5, BORDER),
+                    ("INNERGRID", (0, 0), (-1, -1), 0.25, BORDER),
+                ]
+            )
+        )
+        return t
+
+    # Patient + doctor tables side by side.
+    side = Table(
+        [[boxed(left_rows, avail * 0.5), boxed(right_rows, avail * 0.5)]],
+        colWidths=[avail * 0.5, avail * 0.5],
+        hAlign="LEFT",
+    )
+    side.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 8)]))
+
+    # Report metadata below, full width (2-col label|value, header spanning).
+    meta_rows = box_rows(
+        "REPORT DETAILS",
+        [
+            ("Report ID", report_id),
+            ("Generated", report_date),
+            ("Approved", approved_at),
+            ("Status", "Approved"),
+        ],
+    )
+    meta = boxed(meta_rows, avail)
+
+    outer = Table(
+        [[side], [meta]],
+        colWidths=[avail],
+        hAlign="LEFT",
+    )
+    outer.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
+    return outer
+
+
+def _build_story(
     report: Report,
     patient: User,
     doctor: User,
@@ -90,16 +179,14 @@ def _build_cover_story(
     soap: dict[str, str],
     styles: dict[str, ParagraphStyle],
 ) -> list[Flowable]:
-    """Page 1: cover page with SOAP note as the hero."""
+    """One continuous story: header → report details → SOAP → primary diagnosis → all clinical detail."""
 
-    avail = PAGE_W - 2 * COVER_MARGIN
+    avail = PAGE_W - 2 * MARGIN
     story: list[Flowable] = []
 
-    # Top accent bar
+    # ── Header ──
     story.append(_StripeBar(avail, 4, TEAL))
     story.append(Spacer(1, 14))
-
-    # MediScribe wordmark + tagline
     story.append(
         Paragraph(
             "MediScribe AI",
@@ -134,68 +221,51 @@ def _build_cover_story(
             ParagraphStyle("CoverSub", parent=styles["body"], fontSize=9, textColor=SLATE_LIGHT),
         )
     )
-    story.append(Spacer(1, 18))
+    story.append(Spacer(1, 14))
     story.append(_hrule(avail, BORDER))
-    story.append(Spacer(1, 16))
+    story.append(Spacer(1, 14))
 
-    # Patient & Doctor info cards
-    approved_at = (report.approved_at or datetime.now(UTC)).strftime("%d %B %Y, %H:%M UTC")
-    report_date = (report.created_at or datetime.now(UTC)).strftime("%d %B %Y")
+    # ── Report Details (label → value) ──
+    story.append(_details_table(patient, doctor, report, styles, avail))
+    story.append(Spacer(1, 18))
 
-    info_data = [
-        [
-            _label_cell("Patient", styles["label"]),
-            _label_cell("Attending Physician", styles["label"]),
-        ],
-        [
-            Paragraph(patient.name, styles["body"]),
-            Paragraph(doctor.name, styles["body"]),
-        ],
-        [
-            Paragraph(f"<font color='{SLATE}'>{patient.email}</font>", styles["body"]),
+    # ── Primary Diagnosis highlight box ──
+    diagnoses = _norm_list(extraction.get("diagnosis"))
+    if diagnoses:
+        diag_block: list[Flowable] = [_StripeBar(avail, 3, AMBER)]
+        diag_block.append(Spacer(1, 8))
+        diag_block.append(
             Paragraph(
-                f"<font color='{SLATE}'>{doctor.specialization or 'General Practice'}</font>",
-                styles["body"],
-            ),
-        ],
-        [
-            Paragraph(
-                f"<font color='{SLATE_LIGHT}'>DOB: {patient.dob.strftime('%d %B %Y') if patient.dob else '—'}</font>",
-                styles["small"],
-            ),
-            Paragraph(f"<font color='{SLATE_LIGHT}'>{doctor.email}</font>", styles["small"]),
-        ],
-    ]
-    story.append(Paragraph("Report Details", styles["section"]))
-    story.append(Spacer(1, 8))
-    story.append(_styled_table(info_data, [avail * 0.48, avail * 0.48]))
-    story.append(Spacer(1, 10))
-
-    meta_data = [
-        [
-            _label_cell("Report ID", styles["label"]),
-            _label_cell("Generated", styles["label"]),
-            _label_cell("Approved", styles["label"]),
-            _label_cell("Status", styles["label"]),
-        ],
-        [
-            Paragraph(str(report.id)[:8] + "…", styles["small"]),
-            Paragraph(report_date, styles["small"]),
-            Paragraph(approved_at, styles["small"]),
-            Paragraph(
-                f"<font color='{GREEN}'>● Approved</font>",
-                styles["small"],
-            ),
-        ],
-    ]
-    story.append(_styled_table(meta_data, [avail * 0.28, avail * 0.24, avail * 0.28, avail * 0.16]))
-    story.append(Spacer(1, 22))
+                "PRIMARY DIAGNOSIS",
+                ParagraphStyle(
+                    "DiagHdr",
+                    parent=styles["label"],
+                    fontSize=10.5,
+                    leading=13,
+                    fontName="Helvetica-Bold",
+                    textColor=DEEP_NAVY,
+                    letterSpacing=1.5,
+                ),
+            )
+        )
+        diag_block.append(Spacer(1, 4))
+        for i, d in enumerate(diagnoses):
+            diag_block.append(
+                Paragraph(
+                    f'<font color="{DEEP_NAVY}" size="10"><b>●</b> {d}</font>',
+                    ParagraphStyle(f"DiagItem{i}", fontSize=10, leading=15),
+                )
+            )
+        diag_block.append(Spacer(1, 2))
+        diag_block.append(_hrule(avail, AMBER))
+        story.append(KeepTogether(diag_block))
+        story.append(Spacer(1, 16))
 
     # ── SOAP Note block ──
     story.append(_StripeBar(avail, 3, TEAL))
-    story.append(Spacer(1, 14))
-    story.append(Paragraph("SOAP Note", styles["section"]))
     story.append(Spacer(1, 12))
+    story.append(Paragraph("SOAP Note", styles["section"]))
+    story.append(Spacer(1, 10))
 
     soap_sections = [
         ("S", "Subjective", soap.get("subjective", "N/A")),
@@ -203,8 +273,6 @@ def _build_cover_story(
         ("A", "Assessment", soap.get("assessment", "N/A")),
         ("P", "Plan", soap.get("plan", "N/A")),
     ]
-
-    # Optional supporting data merged into each box when present
     supporting = {
         "S": "symptoms",
         "O": "medical_history",
@@ -213,14 +281,8 @@ def _build_cover_story(
     }
 
     for letter, title, body in soap_sections:
-        extra_items = [str(x) for x in (extraction.get(supporting[letter]) or [])]
-        # Cap supporting bullets so the box never overflows the cover page
-        if len(extra_items) > 6:
-            extra_items = extra_items[:6] + ["… (more on next page)"]
+        extra_items = _norm_list(extraction.get(supporting[letter]))
         body_lines = [line.strip() for line in body.splitlines() if line.strip()] if body != "N/A" else []
-        # Cap the body so a single box never overflows the page
-        if len(body_lines) > 8:
-            body_lines = body_lines[:8] + ["… (full note continues on next page)"]
 
         inner: list[Flowable] = []
         inner.append(
@@ -247,7 +309,6 @@ def _build_cover_story(
                 )
             )
 
-        # Boxed card: colour chip + content, with a full border and left accent bar
         data = [
             [
                 Paragraph(
@@ -277,78 +338,18 @@ def _build_cover_story(
                 ]
             )
         )
-        story.append(t)
+        story.append(KeepTogether(t))
         story.append(Spacer(1, 8))
 
-    story.append(Spacer(1, 10))
+    story.append(Spacer(1, 14))
 
-    # ── Primary Diagnosis highlight box ──
-    diagnoses = extraction.get("diagnosis") or []
-    if diagnoses:
-        diag_data: list[list[Flowable]] = [
-            [
-                Paragraph(
-                    '<font fontName="Helvetica-Bold" color="white" size="9.5">PRIMARY DIAGNOSIS</font>',
-                    ParagraphStyle("DiagHdr", fontSize=9.5, leading=12, textColor=colors.white),
-                )
-            ]
-        ]
-        for d in diagnoses:
-            diag_data.append(
-                [
-                    Paragraph(
-                        f'<font color="{DEEP_NAVY}" size="10"><b>●</b> {d}</font>',
-                        ParagraphStyle(f"DiagItem{len(diag_data)}", fontSize=10, leading=14),
-                    )
-                ]
-            )
-        diag_t = Table(diag_data, colWidths=[avail], hAlign="LEFT")
-        diag_t.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (0, 0), AMBER),
-                    ("BACKGROUND", (0, 1), (0, -1), colors.HexColor("#fef3c7")),
-                    ("BOX", (0, 0), (-1, -1), 0.8, AMBER),
-                    ("TOPPADDING", (0, 0), (0, 0), 7),
-                    ("BOTTOMPADDING", (0, 0), (0, 0), 7),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 12),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 12),
-                    ("TOPPADDING", (0, 1), (0, -1), 5),
-                    ("BOTTOMPADDING", (0, 1), (0, -1), 5),
-                ]
-            )
-        )
-        story.append(diag_t)
-        story.append(Spacer(1, 14))
-    story.append(
-        Paragraph(
-            "This report was generated by AI, reviewed by the attending physician, "
-            "and approved for patient access.",
-            ParagraphStyle(
-                "Disclaimer", parent=styles["body"], fontSize=7.5, textColor=SLATE_LIGHT
-            ),
-        )
-    )
-
-    return story
-
-
-def _build_detail_story(
-    extraction: dict[str, Any],
-    transcript: list[dict[str, Any]] | None,
-    styles: dict[str, ParagraphStyle],
-) -> list[Flowable]:
-    """Page 2+: all clinical detail."""
-    avail = PAGE_W - 2 * BODY_MARGIN
-    story: list[Flowable] = []
-
-    # Page 2 header
+    # ── Clinical Details & Supporting Data ──
     story.append(_StripeBar(avail, 3, TEAL))
-    story.append(Spacer(1, 10))
+    story.append(Spacer(1, 12))
     story.append(Paragraph("Clinical Details & Supporting Data", styles["section"]))
     story.append(Spacer(1, 8))
 
-    # Medications table — detailed
+    # Medications table
     medications: list[dict[str, Any]] = extraction.get("medications") or []
     if medications:
         story.append(Paragraph("Medications", styles["subsection"]))
@@ -368,13 +369,12 @@ def _build_detail_story(
                 "unrecognized": f'<font color="{ROSE}">✗ unrecognized</font>',
                 "warning": f'<font color="{AMBER}">⚠ review</font>',
             }.get(status, f'<font color="{SLATE_LIGHT}">—</font>')
-
             note = m.get("rxnorm_note", "")
             med_rows.append(
                 [
-                    Paragraph(m.get("name", ""), styles["body"]),
-                    Paragraph(m.get("dosage", "—"), styles["body"]),
-                    Paragraph(m.get("frequency", "—"), styles["body"]),
+                    Paragraph(str(m.get("name", "")), styles["body"]),
+                    Paragraph(str(m.get("dosage", "—")), styles["body"]),
+                    Paragraph(str(m.get("frequency", "—")), styles["body"]),
                     Paragraph(f"{badge}<br/><font size='7' color='{SLATE_LIGHT}'>{note}</font>", styles["small"]),
                 ]
             )
@@ -384,17 +384,16 @@ def _build_detail_story(
         story.append(Spacer(1, 16))
 
     # Symptoms / History / Recommendations in two-column
-    symptoms = extraction.get("symptoms") or []
-    history = extraction.get("medical_history") or []
-    recs = extraction.get("recommendations") or []
+    symptoms = _norm_list(extraction.get("symptoms"))
+    history = _norm_list(extraction.get("medical_history"))
+    recs = _norm_list(extraction.get("recommendations"))
 
-    col_data: list[list[Flowable]] = []
-    col_data.append(
+    col_data: list[list[Flowable]] = [
         [
             Paragraph("<b>Symptoms</b>", styles["body"]),
             Paragraph("<b>Medical History</b>", styles["body"]),
         ]
-    )
+    ]
     max_rows = max(len(symptoms), len(history), 1)
     for i in range(max_rows):
         s = symptoms[i] if i < len(symptoms) else ""
@@ -405,9 +404,7 @@ def _build_detail_story(
                 Paragraph(f'<font size="9">● {h}</font>' if h else "", styles["small"]),
             ]
         )
-    story.append(
-        _styled_table(col_data, [avail * 0.48, avail * 0.48])
-    )
+    story.append(_styled_table(col_data, [avail * 0.48, avail * 0.48]))
     story.append(Spacer(1, 16))
 
     add_section("Symptoms", _bullet_list(extraction.get("symptoms"), body_style))
@@ -416,18 +413,17 @@ def _build_detail_story(
     add_section("Recommendations", _bullet_list(extraction.get("recommendations"), body_style))
 
     # Highlights + Follow-up
-    highlights = extraction.get("highlights") or []
-    follow_up = extraction.get("follow_up_points") or []
+    highlights = _norm_list(extraction.get("highlights"))
+    follow_up = _norm_list(extraction.get("follow_up_points"))
     if highlights or follow_up:
         story.append(Paragraph("Clinical Summary", styles["subsection"]))
         story.append(Spacer(1, 4))
-        hl_fu_data: list[list[Flowable]] = []
-        hl_fu_data.append(
+        hl_fu_data: list[list[Flowable]] = [
             [
                 _label_cell("Key Highlights", styles["label"]),
                 _label_cell("Follow-up Points", styles["label"]),
             ]
-        )
+        ]
         max_hl = max(len(highlights), len(follow_up), 1)
         for i in range(max_hl):
             hl = highlights[i] if i < len(highlights) else ""
@@ -450,47 +446,17 @@ def _build_detail_story(
             [_label_cell("Field", styles["label"]), _label_cell("Level", styles["label"]), _label_cell("Note", styles["label"])]
         ]
         for f in flags:
-            level = f.get("level", "—")
+            level = str(f.get("level", "—"))
             level_color = {"high": GREEN, "medium": AMBER, "low": ROSE}.get(level, SLATE)
             flag_rows.append(
                 [
-                    Paragraph(f.get("field", ""), styles["small"]),
+                    Paragraph(str(f.get("field", "")), styles["small"]),
                     Paragraph(f'<font color="{level_color}">{level.upper()}</font>', styles["small"]),
-                    Paragraph(f.get("note", ""), styles["small"]),
+                    Paragraph(str(f.get("note", "")), styles["small"]),
                 ]
             )
         story.append(_styled_table(flag_rows, [avail * 0.22, avail * 0.16, avail * 0.58]))
         story.append(Spacer(1, 12))
-
-    # Transcript excerpt
-    if transcript:
-        story.append(Paragraph("Transcript Excerpt", styles["subsection"]))
-        story.append(Spacer(1, 4))
-        shown = transcript[:12] if len(transcript) > 12 else transcript
-        for seg in shown:
-            speaker = seg.get("speaker", "Unknown")
-            text = seg.get("text", "")
-            time_s = seg.get("time", 0)
-            mins, secs = divmod(int(time_s), 60)
-            color = TEAL if speaker.lower() == "doctor" else AMBER
-            story.append(
-                Paragraph(
-                    f'<font color="{color}" size="9"><b>[{speaker}]</b></font> '
-                    f'<font color="{SLATE}" size="9">({mins:02d}:{secs:02d})</font> '
-                    f'<font size="9">{text}</font>',
-                    ParagraphStyle(
-                        "TxLine", parent=styles["body"], fontSize=9, leading=13, leftIndent=8
-                    ),
-                )
-            )
-            story.append(Spacer(1, 2))
-        if len(transcript) > 12:
-            story.append(
-                Paragraph(
-                    f'<i><font color="{SLATE_LIGHT}">… {len(transcript) - 12} more segments — see full transcript in the application</font></i>',
-                    styles["small"],
-                )
-            )
 
     # Footer
     story.append(Spacer(1, 20))
@@ -509,20 +475,11 @@ def _build_detail_story(
     return story
 
 
-def _cover_page(canvas, doc) -> None:  # type: ignore[no-untyped-def]
-    canvas.saveState()
-    # subtle watermark-style footer
-    canvas.setFillColor(BORDER)
-    canvas.setFont("Helvetica", 6)
-    canvas.drawRightString(PAGE_W - COVER_MARGIN, 20, "MediScribe AI · page 1")
-    canvas.restoreState()
-
-
-def _body_page(canvas, doc) -> None:  # type: ignore[no-untyped-def]
+def _page_footer(canvas, doc) -> None:  # type: ignore[no-untyped-def]
     canvas.saveState()
     canvas.setFillColor(SLATE_LIGHT)
     canvas.setFont("Helvetica", 6)
-    canvas.drawRightString(PAGE_W - BODY_MARGIN, 20, f"MediScribe AI · page {doc.page}")
+    canvas.drawRightString(PAGE_W - MARGIN, 20, f"MediScribe AI · page {doc.page}")
     canvas.restoreState()
 
 
@@ -530,16 +487,7 @@ def generate_report_pdf(report: Report, patient: User, doctor: User) -> BytesIO:
     extraction: dict[str, Any] = report.extraction_json or {}
     soap: dict[str, str] = extraction.get("soap", {})
 
-    # Parse transcript from report for detail page
-    transcript = None
-    raw_tx = report.transcript_json
-    if isinstance(raw_tx, list):
-        transcript = raw_tx
-    elif isinstance(raw_tx, dict):
-        transcript = raw_tx.get("segments") or raw_tx.get("transcript") or []
-
     base_styles = getSampleStyleSheet()
-
     styles: dict[str, ParagraphStyle] = {
         "h1": ParagraphStyle("H1x", parent=base_styles["Normal"], fontSize=18, leading=22, fontName="Helvetica-Bold", textColor=DEEP_NAVY),
         "body": ParagraphStyle("BodyX", parent=base_styles["Normal"], fontSize=9.5, leading=14, textColor=SLATE),
@@ -558,30 +506,10 @@ def generate_report_pdf(report: Report, patient: User, doctor: User) -> BytesIO:
         subject=f"Clinical report for {patient.name}",
     )
 
-    # Cover frame (page 1)
-    cover_frame = Frame(
-        COVER_MARGIN, COVER_MARGIN, PAGE_W - 2 * COVER_MARGIN, PAGE_H - 2 * COVER_MARGIN, id="cover"
-    )
-    # Body frame (page 2+)
-    body_frame = Frame(
-        BODY_MARGIN, BODY_MARGIN, PAGE_W - 2 * BODY_MARGIN, PAGE_H - 2 * BODY_MARGIN, id="body"
-    )
+    frame = Frame(MARGIN, MARGIN, PAGE_W - 2 * MARGIN, PAGE_H - 2 * MARGIN, id="body")
+    doc.addPageTemplates([PageTemplate(id="Body", frames=[frame], onPage=_page_footer)])
 
-    cover_template = PageTemplate(id="Cover", frames=[cover_frame], onPage=_cover_page)
-    body_template = PageTemplate(id="Body", frames=[body_frame], onPage=_body_page)
-
-    doc.addPageTemplates([cover_template, body_template])
-
-    story: list[Flowable] = []
-
-    # Page 1: Cover
-    story.extend(_build_cover_story(report, patient, doctor, extraction, soap, styles))
-    story.append(NextPageTemplate("Body"))
-    story.append(PageBreak())
-
-    # Page 2+: Details
-    story.extend(_build_detail_story(extraction, transcript, styles))
-
+    story: list[Flowable] = _build_story(report, patient, doctor, extraction, soap, styles)
     doc.build(story)
     buffer.seek(0)
     return buffer

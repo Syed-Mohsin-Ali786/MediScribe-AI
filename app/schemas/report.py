@@ -29,16 +29,15 @@ class ReportOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class ApprovedReportListItem(BaseModel):
+class AppointmentHistoryItem(BaseModel):
+    """The only report data a patient may see: when and with whom the visit happened."""
+
     id: UUID
-    patient_id: UUID
     doctor_id: UUID
-    audio_url: str
-    extraction_json: dict | None = None
-    validation_flags: list[dict] | None = None
+    doctor_name: str
+    specialization: str | None = None
+    appointment_at: datetime
     status: ReportStatus
-    created_at: datetime
-    approved_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
