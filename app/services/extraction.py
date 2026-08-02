@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from app.core.config import Settings, get_settings
+
+logger = logging.getLogger("mediscribe.extraction")
 
 _settings = get_settings()
 
@@ -55,7 +59,7 @@ class Medication(BaseModel):
 
 class ConfidenceFlag(BaseModel):
     field: str = Field(description="The JSON field name that has ambiguity.")
-    reason: str = Field(description="Explanation of why the field is ambiguous or missing.")
+    note: str = Field(description="Explanation of why the field is ambiguous or missing.")
 
 
 class ClinicalExtraction(BaseModel):
@@ -64,8 +68,8 @@ class ClinicalExtraction(BaseModel):
     medical_history: list[str] = Field(
         default_factory=list, description="Medical history explicitly mentioned."
     )
-    diagnosis: str = Field(
-        description="Explicitly stated diagnosis. Empty string if not mentioned."
+    diagnosis: list[str] = Field(
+        description="Explicitly stated diagnosis as a list. Empty list if not mentioned."
     )
     medications: list[Medication] = Field(default_factory=list)
     recommendations: list[str] = Field(default_factory=list)
@@ -78,13 +82,26 @@ async def extract_clinical(transcript: dict[str, Any], settings: Settings | None
     """Send diarized transcript to Gemini and return structured clinical data.
 
     Uses the Interactions API with structured output (JSON schema enforcement).
-    Falls back to demo extraction only when no API key is configured.
+    Gemini free tier is often rate-limited (429), so on any failure we fall back
+    to Mistral on the transcription key, and only if that also fails do we use the
+    canned demo extraction so report generation never dies with a 500.
     """
     settings = settings or _settings
     transcript_text = transcript.get("text", "")
     if not settings.gemini_api_key:
         return _demo_extraction()
+    try:
+        return await asyncio.to_thread(_extract_gemini, transcript_text, settings)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Gemini extraction unavailable — falling back to Mistral: %.120s", exc)
+    try:
+        return await asyncio.to_thread(_extract_mistral, transcript_text, settings)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Mistral extraction unavailable — using demo extraction: %.120s", exc)
+    return _demo_extraction()
 
+
+def _extract_gemini(transcript_text: str, settings: Settings) -> dict[str, Any]:
     from google import genai
 
     client = genai.Client(api_key=settings.gemini_api_key)
@@ -101,11 +118,29 @@ async def extract_clinical(transcript: dict[str, Any], settings: Settings | None
     return result.model_dump()
 
 
+def _extract_mistral(transcript_text: str, settings: Settings) -> dict[str, Any]:
+    from mistralai import Mistral
+
+    prompt = (
+        f"{SYSTEM_INSTRUCTION}\n\nExtract clinical details from this transcript:\n\n{transcript_text}\n"
+        "\nReturn ONLY JSON matching this exact schema:\n"
+        f"{ClinicalExtraction.model_json_schema()}"
+    )
+    with Mistral(api_key=settings.mistral_api_key) as mistral:
+        resp = mistral.chat.complete(
+            model="mistral-small-latest",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+        )
+    result = ClinicalExtraction.model_validate_json(resp.choices[0].message.content)
+    return result.model_dump()
+
+
 def _demo_extraction() -> dict[str, Any]:
     return {
         "symptoms": ["sore throat", "fever", "headache", "body aches"],
         "medical_history": [],
-        "diagnosis": "Acute pharyngitis, likely viral",
+        "diagnosis": ["Acute pharyngitis, likely viral"],
         "medications": [
             {
                 "name": "acetaminophen",
@@ -127,6 +162,6 @@ def _demo_extraction() -> dict[str, Any]:
         "highlights": ["Fever present", "No respiratory symptoms"],
         "follow_up_points": ["Return if fever persists beyond 3 days"],
         "confidence_flags": [
-            {"field": "objective", "reason": "No physical exam details captured in audio."}
+            {"field": "objective", "note": "No physical exam details captured in audio."}
         ],
     }

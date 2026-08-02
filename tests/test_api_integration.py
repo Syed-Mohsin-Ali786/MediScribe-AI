@@ -42,15 +42,16 @@ async def client():
     await engine.dispose()
 
 
-async def _register_doctor(client: httpx.AsyncClient) -> dict:
+async def _create_doctor(client: httpx.AsyncClient, admin_token: str, email: str, name: str) -> dict:
     resp = await client.post(
-        "/api/v1/auth/register",
+        "/api/v1/admin/doctors",
         json={
-            "name": "Dr. Alex Rivera",
-            "email": "doctor@test.ai",
+            "name": name,
+            "email": email,
             "password": "DoctorPass!123",
             "specialization": "General Practice",
         },
+        headers=_auth(admin_token),
     )
     assert resp.status_code == 201, resp.text
     return resp.json()
@@ -84,33 +85,34 @@ def _auth(token: str) -> dict:
 async def test_full_workflow(client) -> None:
     ac, session_factory = client
 
-    # 1. Doctor self-registers as pending.
-    await _register_doctor(ac)
+    # 1. Admin creates the doctor directly (no self-registration).
     await _seed_admin(session_factory)
 
     admin_token = await _login(ac, "admin@test.ai", "AdminPass!123")
+    await _create_doctor(ac, admin_token, "doctor@test.ai", "Dr. Alex Rivera")
 
-    # 2. Admin approves the doctor.
-    pending = await ac.get("/api/v1/admin/pending-doctors", headers=_auth(admin_token))
-    assert pending.status_code == 200, pending.text
-    doctor_id = pending.json()[0]["id"]
-    promote = await ac.patch(
-        f"/api/v1/admin/users/{doctor_id}/promote-to-doctor", headers=_auth(admin_token)
-    )
-    assert promote.status_code == 200, promote.text
-    assert promote.json()["role"] == "doctor"
-
-    # 3. Doctor creates a patient.
+    # 2. Doctor logs in immediately (approved by default).
     doctor_token = await _login(ac, "doctor@test.ai", "DoctorPass!123")
     create_patient = await ac.post(
         "/api/v1/doctor/patients",
-        json={"name": "Jamie Morgan", "email": "jamie@test.ai", "dob": "1990-05-01"},
+        json={"name": "Jamie Morgan", "email": "jamie@test.ai", "dob": "1990-05-01", "password": "PatientPass!123"},
         headers=_auth(doctor_token),
     )
     assert create_patient.status_code == 201, create_patient.text
     patient_info = create_patient.json()
     patient_id = patient_info["id"]
-    assert patient_info["temporary_password"]
+
+    # Doctor directory endpoints only expose this doctor's patients.
+    patients = await ac.get("/api/v1/doctor/patients", headers=_auth(doctor_token))
+    assert patients.status_code == 200, patients.text
+    assert patients.json()[0]["id"] == patient_id
+    search = await ac.get(
+        "/api/v1/doctor/patients/search",
+        params={"q": "Jamie"},
+        headers=_auth(doctor_token),
+    )
+    assert search.status_code == 200, search.text
+    assert [patient["id"] for patient in search.json()] == [patient_id]
 
     # 4. Doctor generates a report from uploaded audio (demo pipeline, no API keys).
     gen = await ac.post(
@@ -123,10 +125,13 @@ async def test_full_workflow(client) -> None:
     report = gen.json()
     assert report["status"] == "draft_generated"
     assert report["extraction_json"]["diagnosis"]
-    assert report["validation_flags"]["source"] == "rxnorm_or_fallback"
+    assert isinstance(report["validation_flags"], list)
 
     # 5. Patient cannot see a draft report (403).
-    patient_token = await _login(ac, "jamie@test.ai", patient_info["temporary_password"])
+    patient_token = await _login(ac, "jamie@test.ai", "PatientPass!123")
+    doctors = await ac.get("/api/v1/patient/doctors", headers=_auth(patient_token))
+    assert doctors.status_code == 200, doctors.text
+    assert doctors.json()[0]["email"] == "doctor@test.ai"
     draft_fetch = await ac.get(f"/api/v1/records/{report['id']}", headers=_auth(patient_token))
     assert draft_fetch.status_code == 403
 
@@ -135,7 +140,15 @@ async def test_full_workflow(client) -> None:
         f"/api/v1/records/{report['id']}/approve", headers=_auth(doctor_token)
     )
     assert approve.status_code == 200, approve.text
-    assert approve.json()["status"] == "approved"
+    approved_report = approve.json()
+    assert approved_report["status"] == "approved"
+    assert approved_report["id"] == report["id"]
+
+    # Doctor can list their reports via GET /doctor/reports.
+    doctor_reports = await ac.get("/api/v1/doctor/reports", headers=_auth(doctor_token))
+    assert doctor_reports.status_code == 200, doctor_reports.text
+    assert len(doctor_reports.json()) >= 1
+    assert any(r["id"] == report["id"] for r in doctor_reports.json())
 
     patient_list = await ac.get("/api/v1/patient/reports", headers=_auth(patient_token))
     assert patient_list.status_code == 200, patient_list.text
@@ -150,21 +163,15 @@ async def test_full_workflow(client) -> None:
 @pytest.mark.asyncio
 async def test_doctor_cannot_access_other_doctors_report(client) -> None:
     ac, session_factory = client
-    await _register_doctor(ac)
     await _seed_admin(session_factory)
     admin_token = await _login(ac, "admin@test.ai", "AdminPass!123")
-    doctor_id = (await ac.get("/api/v1/admin/pending-doctors", headers=_auth(admin_token))).json()[0][
-        "id"
-    ]
-    await ac.patch(
-        f"/api/v1/admin/users/{doctor_id}/promote-to-doctor", headers=_auth(admin_token)
-    )
+    await _create_doctor(ac, admin_token, "doctor@test.ai", "Dr. Alex Rivera")
 
     doctor_token = await _login(ac, "doctor@test.ai", "DoctorPass!123")
     patient = (
         await ac.post(
             "/api/v1/doctor/patients",
-            json={"name": "P1", "email": "p1@test.ai"},
+            json={"name": "P1", "email": "p1@test.ai", "password": "PatientPass!123"},
             headers=_auth(doctor_token),
         )
     ).json()
@@ -177,22 +184,8 @@ async def test_doctor_cannot_access_other_doctors_report(client) -> None:
         )
     ).json()
 
-    # Second doctor registers and gets approved.
-    await ac.post(
-        "/api/v1/auth/register",
-        json={
-            "name": "Dr. Second",
-            "email": "second@test.ai",
-            "password": "DoctorPass!123",
-            "specialization": "Internal Medicine",
-        },
-    )
-    second_id = (
-        await ac.get("/api/v1/admin/pending-doctors", headers=_auth(admin_token))
-    ).json()[0]["id"]
-    await ac.patch(
-        f"/api/v1/admin/users/{second_id}/promote-to-doctor", headers=_auth(admin_token)
-    )
+    # Second doctor is created directly by the admin.
+    await _create_doctor(ac, admin_token, "second@test.ai", "Dr. Second")
     second_token = await _login(ac, "second@test.ai", "DoctorPass!123")
 
     resp = await ac.get(f"/api/v1/records/{report['id']}", headers=_auth(second_token))

@@ -24,12 +24,16 @@ def run_async[T](coro: Coroutine[Any, Any, T]) -> T:
 
 _settings = get_settings()
 
-# Convert postgresql+psycopg:// to postgresql+psycopg_async:// for async SQLAlchemy.
+# Normalise the DATABASE_URL for the async engine:
+#  - postgresql+psycopg://  -> postgresql+psycopg_async:// (Supabase)
+#  - sqlite://  -> sqlite+aiosqlite:// (offline demo)
 DATABASE_URL = str(_settings.database_url)
 if DATABASE_URL.startswith("postgresql+psycopg://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql+psycopg://", "postgresql+psycopg_async://", 1)
 elif DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg_async://", 1)
+elif DATABASE_URL.startswith("sqlite://"):
+    DATABASE_URL = DATABASE_URL.replace("sqlite://", "sqlite+aiosqlite://", 1)
 
 engine = create_async_engine(
     DATABASE_URL,

@@ -3,16 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, Field
 
 from app.models.user import UserRole
-
-
-class DoctorRegister(BaseModel):
-    name: str
-    email: EmailStr
-    password: str
-    specialization: str
 
 
 class UserMe(BaseModel):
@@ -22,8 +15,34 @@ class UserMe(BaseModel):
     role: UserRole
     is_approved: bool
     specialization: str | None = None
+    avatar_url: str | None = None
+    permission_requested: bool = False
+    permission_requested_at: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+
+class DirectoryUserOut(BaseModel):
+    """Safe user fields returned by doctor/patient directory endpoints."""
+
+    id: UUID
+    name: str
+    email: str
+    role: UserRole
+    is_approved: bool
+    specialization: str | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class DoctorProfileUpdate(BaseModel):
+    """Editable fields on the doctor's own profile. Omitted fields are left
+    unchanged; an empty specialization string clears it."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    specialization: str | None = Field(default=None, max_length=255)
+    avatar_url: str | None = Field(default=None, max_length=500)
 
 
 class PendingDoctorOut(BaseModel):
@@ -31,8 +50,10 @@ class PendingDoctorOut(BaseModel):
     name: str
     email: str
     specialization: str | None = None
+    avatar_url: str | None = None
     role: UserRole
     is_approved: bool
+    permission_requested: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}

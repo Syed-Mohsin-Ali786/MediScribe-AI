@@ -5,12 +5,10 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, String
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy import DateTime, ForeignKey, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import Base, TimestampMixin, UUIDMixin
+from app.models.base import Base, JSONBCompat, TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
     from app.models.user import User
@@ -25,21 +23,21 @@ class Report(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "reports"
 
     patient_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        Uuid,
         ForeignKey("users.id"),
         nullable=False,
         index=True,
     )
     doctor_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        Uuid,
         ForeignKey("users.id"),
         nullable=False,
         index=True,
     )
     audio_url: Mapped[str] = mapped_column(String(2048), nullable=False)
-    transcript_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    extraction_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    validation_flags: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    transcript_json: Mapped[dict | None] = mapped_column(JSONBCompat, nullable=True)
+    extraction_json: Mapped[dict | None] = mapped_column(JSONBCompat, nullable=True)
+    validation_flags: Mapped[dict | None] = mapped_column(JSONBCompat, nullable=True)
     status: Mapped[ReportStatus] = mapped_column(
         String(50),
         nullable=False,

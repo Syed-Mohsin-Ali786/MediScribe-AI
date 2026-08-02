@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import Boolean, ForeignKey, String
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy import Boolean, ForeignKey, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
+    from app.models.contact_message import ContactMessage
     from app.models.report import Report
 
 
@@ -31,10 +31,14 @@ class User(Base, UUIDMixin, TimestampMixin):
     role: Mapped[UserRole] = mapped_column(String(50), nullable=False, default=UserRole.PENDING_DOCTOR)
     is_approved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     specialization: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Doctors explicitly request access; only then does the admin see them for approval.
+    permission_requested: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    permission_requested_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     # Self-referential FK: patients are linked to their doctor.
     doctor_id: Mapped[UUID | None] = mapped_column(
-        PGUUID(as_uuid=True),
+        Uuid,
         ForeignKey("users.id"),
         nullable=True,
         index=True,
@@ -62,4 +66,9 @@ class User(Base, UUIDMixin, TimestampMixin):
         "Report",
         foreign_keys="Report.doctor_id",
         back_populates="doctor",
+    )
+    contact_messages: Mapped[list[ContactMessage]] = relationship(
+        "ContactMessage",
+        back_populates="doctor",
+        cascade="all, delete-orphan",
     )
