@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Annotated
 from uuid import UUID
 
@@ -68,8 +69,13 @@ async def generate_report(
     file_bytes = await audio.read() if audio else b""
 
     transcript = await transcribe_audio(file_bytes, filename)
-    await translate_transcript(transcript)
-    extraction = await extract_clinical(transcript)
+    # Translation (mutates transcript segments) and extraction (reads only the
+    # transcript text) touch disjoint data — run them concurrently to cut the
+    # pipeline's critical path by the slower of the two.
+    translation, extraction = await asyncio.gather(
+        translate_transcript(transcript),
+        extract_clinical(transcript),
+    )
     validation = await validate_medications(extraction.get("medications", []))
     audio_url = upload_audio_placeholder(file_bytes, filename)
 

@@ -195,21 +195,36 @@ async def _translate_chunk_with_retry(
     segments: list[dict],
     indices: list[int],
     settings: Settings,
+    *,
+    gemini_disabled: asyncio.Event,
 ) -> list[_SegmentTranslation]:
     """Translate one chunk: Gemini first, Mistral as instant failover.
 
     Gemini's free tier is often rate-limited; when it fails we immediately fall
     back to the Mistral chat API on the same key that drives transcription. No
     long retry sleeps. If both fail, the error bubbles up to the glossary fallback.
+    `gemini_disabled` is a circuit breaker: once a 429 is observed, the remaining
+    chunks skip Gemini entirely and go straight to Mistral.
     """
-    try:
-        return await asyncio.to_thread(_translate_chunk_sync, segments, indices, settings)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Gemini unavailable for chunk %d — falling back to Mistral: %.120s", indices[0], exc)
+    if not gemini_disabled.is_set():
+        try:
+            return await asyncio.to_thread(_translate_chunk_sync, segments, indices, settings)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Gemini unavailable for chunk %d — falling back to Mistral: %.120s", indices[0], exc)
+            if "429" in str(exc):
+                gemini_disabled.set()
     try:
         return await asyncio.to_thread(_translate_chunk_sync_mistral, segments, indices, settings)
     except Exception as exc:  # noqa: BLE001
         raise exc
+
+
+# Chunks are translated concurrently, but bounded: firing every Gemini call at
+# once trips the free-tier per-minute quota (429). A small semaphore keeps the
+# pipeline faster than sequential while staying under the rate limit; once the
+# circuit breaker flips (Gemini quota exhausted) the chunks still flow at this
+# concurrency through Mistral, which has no such quota.
+_TRANSLATION_CONCURRENCY = asyncio.Semaphore(6)
 
 
 
@@ -217,7 +232,6 @@ async def translate_transcript(
     transcript: dict[str, Any],
     settings: Settings | None = None,
     *,
-    inter_chunk_delay: float = 0.0,
     force: bool = False,
 ) -> dict[str, Any]:
     """Add `text_en` / `text_ur` and correct `speaker` labels to every transcript
@@ -226,10 +240,10 @@ async def translate_transcript(
     Uses Gemini when a key is configured; otherwise (and on any Gemini failure)
     falls back to the built-in demo glossary so the feature works offline. Live
     transcripts that aren't in the glossary keep only their original text, and the
-    frontend falls back to that. Long transcripts are translated in chunks so very
-    large reports never exceed the model's output window. `inter_chunk_delay`
-    spaces out requests to stay inside the free-tier per-minute quota. With
-    `force=True` every segment is re-annotated, overwriting prior labels.
+    frontend falls back to that. Long transcripts are translated in concurrent
+    chunks (each chunk keeps its own Gemini→Mistral failover) so large reports
+    don't pay the cost of sequential round-trips. With `force=True` every segment
+    is re-annotated, overwriting prior labels.
     """
     settings = settings or _settings
     segments = transcript.get("segments") or []
@@ -255,14 +269,25 @@ async def translate_transcript(
         apply_glossary(transcript)
         return transcript
     try:
-        for start in range(0, len(missing), _CHUNK_SIZE):
-            batch = missing[start : start + _CHUNK_SIZE]
-            chunk = [seg for _, seg in batch]
-            indices = [i for i, _ in batch]
-            translations = await _translate_chunk_with_retry(chunk, indices, settings)
-            _apply_translations(transcript, translations)
-            if inter_chunk_delay and start + _CHUNK_SIZE < len(missing):
-                await asyncio.sleep(inter_chunk_delay)
+        batches = [
+            missing[start : start + _CHUNK_SIZE]
+            for start in range(0, len(missing), _CHUNK_SIZE)
+        ]
+
+        gemini_disabled = asyncio.Event()
+
+        async def _run_batch(batch: list[tuple[int, dict]]) -> list[_SegmentTranslation]:
+            async with _TRANSLATION_CONCURRENCY:
+                return await _translate_chunk_with_retry(
+                    [seg for _, seg in batch], [i for i, _ in batch], settings,
+                    gemini_disabled=gemini_disabled,
+                )
+
+        # Translate chunks concurrently, bounded by a small semaphore so we get a
+        # speedup over sequential without tripping Gemini's free-tier quota (429).
+        results = await asyncio.gather(*[_run_batch(batch) for batch in batches])
+        for chunk_translations in results:
+            _apply_translations(transcript, chunk_translations)
     except Exception:
         logger.exception("Gemini translation failed — using glossary fallback")
         apply_glossary(transcript)
