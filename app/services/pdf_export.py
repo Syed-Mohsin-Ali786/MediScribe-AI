@@ -392,25 +392,23 @@ def _build_story(
         [
             Paragraph("<b>Symptoms</b>", styles["body"]),
             Paragraph("<b>Medical History</b>", styles["body"]),
+            Paragraph("<b>Recommendations</b>", styles["body"]),
         ]
     ]
-    max_rows = max(len(symptoms), len(history), 1)
+    max_rows = max(len(symptoms), len(history), len(recs), 1)
     for i in range(max_rows):
         s = symptoms[i] if i < len(symptoms) else ""
         h = history[i] if i < len(history) else ""
+        r = recs[i] if i < len(recs) else ""
         col_data.append(
             [
                 Paragraph(f'<font size="9">● {s}</font>' if s else "", styles["small"]),
                 Paragraph(f'<font size="9">● {h}</font>' if h else "", styles["small"]),
+                Paragraph(f'<font size="9">● {r}</font>' if r else "", styles["small"]),
             ]
         )
-    story.append(_styled_table(col_data, [avail * 0.48, avail * 0.48]))
+    story.append(_styled_table(col_data, [avail * 0.31, avail * 0.31, avail * 0.31]))
     story.append(Spacer(1, 16))
-
-    add_section("Symptoms", _bullet_list(extraction.get("symptoms"), body_style))
-    add_section("Medical History", _bullet_list(extraction.get("medical_history"), body_style))
-    add_section("Medications", _medication_lines(extraction.get("medications"), body_style))
-    add_section("Recommendations", _bullet_list(extraction.get("recommendations"), body_style))
 
     # Highlights + Follow-up
     highlights = _norm_list(extraction.get("highlights"))
