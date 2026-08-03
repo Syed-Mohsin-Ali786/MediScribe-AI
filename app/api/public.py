@@ -46,22 +46,24 @@ async def send_contact_message(
     payload: ContactMessageCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> ContactMessage:
-    """Persist a message from the landing-page "Contact Now" form for the
-    chosen doctor. Public endpoint — no auth required. The doctor reads it in
-    their Messages inbox (`GET /doctor/messages`)."""
-    doctor = await db.get(User, payload.doctor_id)
-    if (
-        doctor is None
-        or doctor.role != UserRole.DOCTOR
-        or not doctor.is_approved
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Doctor not found",
-        )
+    """Persist a message from the landing-page "Contact Now" form.
+
+    Public endpoint — no auth required. If a valid doctor ID is provided, the
+    message is linked to that doctor; otherwise it is stored as a generic inbox
+    message and can be viewed by admins.
+    """
+    doctor_id = payload.doctor_id
+    doctor = None
+    if doctor_id is not None:
+        doctor = await db.get(User, doctor_id)
+        if doctor is None or doctor.role != UserRole.DOCTOR or not doctor.is_approved:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Doctor not found",
+            )
 
     message = ContactMessage(
-        doctor_id=doctor.id,
+        doctor_id=doctor.id if doctor is not None else None,
         name=payload.name,
         email=payload.email,
         phone=payload.phone,

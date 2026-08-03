@@ -7,7 +7,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 
 class ContactMessageCreate(BaseModel):
-    doctor_id: UUID
+    doctor_id: UUID | None = None
     name: str = Field(min_length=1, max_length=255)
     email: EmailStr
     phone: str = Field(min_length=7, max_length=20, pattern=r"^\+?[0-9\s\-()]+$")
