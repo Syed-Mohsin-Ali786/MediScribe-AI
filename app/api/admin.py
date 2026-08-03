@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.security import hash_password
 from app.dependencies.auth import require_role
+from app.models.contact_message import ContactMessage
 from app.models.report import Report, ReportStatus
 from app.models.user import User, UserRole
 from app.schemas.admin import (
@@ -24,11 +25,45 @@ from app.schemas.admin import (
     DoctorReportBreakdown,
     IntegrationsStatus,
 )
+from app.schemas.message import ContactMessageOut
 from app.schemas.user import PendingDoctorOut
 from app.services.avatar import save_avatar
 from app.services.integrations import check_integrations
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+@router.get(
+    "/contact-messages",
+    response_model=list[ContactMessageOut],
+    summary="List all contact messages submitted through the public form",
+)
+async def list_contact_messages(
+    _admin: Annotated[User, Depends(require_role(UserRole.ADMIN))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[ContactMessage]:
+    result = await db.scalars(select(ContactMessage).order_by(ContactMessage.created_at.desc()))
+    return list(result.all())
+
+
+@router.patch(
+    "/contact-messages/{message_id}/read",
+    response_model=ContactMessageOut,
+    summary="Mark a contact message as read",
+)
+async def mark_contact_message_read(
+    message_id: UUID,
+    _admin: Annotated[User, Depends(require_role(UserRole.ADMIN))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> ContactMessage:
+    message = await db.get(ContactMessage, message_id)
+    if message is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
+
+    message.read = True
+    await db.commit()
+    await db.refresh(message)
+    return message
 
 
 @router.get(

@@ -10,6 +10,7 @@ from app.core.database import get_db
 from app.core.security import hash_password
 from app.main import app
 from app.models import Base
+from app.models.contact_message import ContactMessage
 from app.models.user import User, UserRole
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
@@ -79,6 +80,64 @@ async def _login(client: httpx.AsyncClient, email: str, password: str) -> str:
 
 def _auth(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.mark.asyncio
+async def test_admin_contact_messages_endpoints(client) -> None:
+    ac, session_factory = client
+    await _seed_admin(session_factory)
+
+    admin_token = await _login(ac, "admin@test.ai", "AdminPass!123")
+    doctor_payload = await _create_doctor(ac, admin_token, "doctor@test.ai", "Dr. Alex Rivera")
+    doctor_id = doctor_payload["id"]
+
+    async with session_factory() as session:
+        older = ContactMessage(
+            doctor_id=doctor_id,
+            name="Older Sender",
+            email="older@example.com",
+            phone="+1 111 111 1111",
+            message="First message",
+            read=True,
+        )
+        newer = ContactMessage(
+            doctor_id=doctor_id,
+            name="Newer Sender",
+            email="newer@example.com",
+            phone="+1 222 222 2222",
+            message="Second message",
+            read=False,
+        )
+        session.add_all([older, newer])
+        await session.commit()
+        await session.refresh(newer)
+        await session.refresh(older)
+        newer_id = newer.id
+
+    list_resp = await ac.get("/api/v1/admin/contact-messages", headers=_auth(admin_token))
+    assert list_resp.status_code == 200, list_resp.text
+    messages = list_resp.json()
+    assert len(messages) == 2
+    assert messages[0]["id"] == str(newer_id)
+    assert messages[0]["read"] is False
+    assert messages[1]["read"] is True
+
+    read_resp = await ac.patch(
+        f"/api/v1/admin/contact-messages/{newer_id}/read",
+        headers=_auth(admin_token),
+    )
+    assert read_resp.status_code == 200, read_resp.text
+    assert read_resp.json()["read"] is True
+
+    unauth_resp = await ac.get("/api/v1/admin/contact-messages")
+    assert unauth_resp.status_code == 401
+
+    doctor_token = await _login(ac, "doctor@test.ai", "DoctorPass!123")
+    doctor_forbidden = await ac.get(
+        "/api/v1/admin/contact-messages",
+        headers=_auth(doctor_token),
+    )
+    assert doctor_forbidden.status_code == 403
 
 
 @pytest.mark.asyncio
