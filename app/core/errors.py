@@ -6,12 +6,13 @@ from uuid import uuid4
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 logger = logging.getLogger("mediscribe.errors")
 
 GENERIC_MESSAGE = "Something went wrong on our end. Please try again in a moment."
 DB_UNAVAILABLE_MESSAGE = "The service is temporarily busy. Please try again in a few seconds."
+DATA_CONFLICT_MESSAGE = "We couldn't save that. Please check the details and try again."
 
 
 def _request_id(request: Request) -> str | None:
@@ -48,6 +49,25 @@ async def db_error_handler(request: Request, exc: SQLAlchemyError) -> JSONRespon
     return JSONResponse(
         status_code=503,
         content=_error_body(503, DB_UNAVAILABLE_MESSAGE, "service_unavailable", request),
+    )
+
+
+async def data_conflict_handler(request: Request, exc: IntegrityError) -> JSONResponse:
+    """Handle constraint violations (NOT NULL, FK, unique) without pretending the DB is down.
+
+    A stale schema or a bad payload is a client-side problem, not an outage —
+    it must never be reported as "the service is temporarily busy".
+    """
+    logger.error(
+        "Data conflict on %s %s (request_id=%s): %s",
+        request.method,
+        request.url.path,
+        _request_id(request),
+        exc,
+    )
+    return JSONResponse(
+        status_code=409,
+        content=_error_body(409, DATA_CONFLICT_MESSAGE, "data_conflict", request),
     )
 
 

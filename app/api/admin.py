@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,13 +36,22 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 @router.get(
     "/contact-messages",
     response_model=list[ContactMessageOut],
-    summary="List all contact messages submitted through the public form",
+    summary="List contact messages submitted through the public form",
 )
 async def list_contact_messages(
     _admin: Annotated[User, Depends(require_role(UserRole.ADMIN))],
     db: Annotated[AsyncSession, Depends(get_db)],
+    intent: Annotated[str | None, Query()] = None,
 ) -> list[ContactMessage]:
-    result = await db.scalars(select(ContactMessage).order_by(ContactMessage.created_at.desc()))
+    """List every public contact message.
+
+    Optionally filter by the sender's intent — ``doctor_to_us`` returns the
+    registration requests, ``patient_to_doctor`` the patient enquiries.
+    """
+    stmt = select(ContactMessage)
+    if intent:
+        stmt = stmt.where(ContactMessage.intent == intent)
+    result = await db.scalars(stmt.order_by(ContactMessage.created_at.desc()))
     return list(result.all())
 
 
